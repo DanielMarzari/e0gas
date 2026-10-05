@@ -11,7 +11,12 @@ import {
   type Settings, DEFAULT_PALETTE, loadSettings, saveSettings, applyTheme, paletteSwatch, resolveShade,
 } from "@/lib/theme";
 import { type Filter, NO_FILTER, applyFilter, filterCount, isActive, radiusMiles } from "@/lib/filters";
-import { useCustomStations, useFavorites } from "@/lib/storage";
+import { useCustomStations, useFavorites, useLocalHidden } from "@/lib/storage";
+import {
+  type HiddenEntry, ApiError, addRemote, deleteRemote, fetchHidden, fetchRemote, getWriteKey, hideRemote,
+  setWriteKey, unhideRemote,
+} from "@/lib/remote";
+import KeyPrompt from "@/components/KeyPrompt";
 import SettingsPanel from "@/components/SettingsPanel";
 import FilterPanel from "@/components/FilterPanel";
 import SearchControl from "@/components/SearchControl";
@@ -51,6 +56,14 @@ export default function Home() {
   const [baseStations, setBaseStations] = useState<Station[]>([]);
   const [updated, setUpdated] = useState("");
   const [custom, setCustom] = useCustomStations();
+  /** Stations added with + and saved on the e0gas server (shared by every device). */
+  const [remote, setRemote] = useState<Station[]>([]);
+  const [remoteHidden, setRemoteHidden] = useState<HiddenEntry[]>([]);
+  const [localHidden, setLocalHidden] = useLocalHidden();
+  /** Whether the e0gas API answered; without it, adds and flags stay on this device. */
+  const [apiUp, setApiUp] = useState(false);
+  /** A server write waiting for the write key. */
+  const [keyPrompt, setKeyPrompt] = useState<{ run: (key: string) => Promise<void>; fallback: () => void; error?: string } | null>(null);
   const [favoriteIds, setFavoriteIds] = useFavorites();
   const [user, setUser] = useState<LatLng | null>(null);
   const [loc, setLoc] = useState<LocState>("idle");
@@ -95,12 +108,28 @@ export default function Home() {
     });
   }, []);
 
+  useEffect(() => {
+    Promise.all([fetchRemote(), fetchHidden()]).then(([rows, hidden]) => {
+      if (!rows || !hidden) return;
+      setApiUp(true);
+      setRemote(rows);
+      setRemoteHidden(hidden);
+    });
+  }, []);
+
   // ── Derived station sets ──
-  const all = useMemo(() => [...baseStations, ...custom], [baseStations, custom]);
-  const byId = useMemo(() => new Map(all.map((s) => [s.id, s])), [all]);
+  const everything = useMemo(() => [...baseStations, ...remote, ...custom], [baseStations, remote, custom]);
+  const byId = useMemo(() => new Map(everything.map((s) => [s.id, s])), [everything]);
+  /** Flagged "no ethanol-free anymore": kept, but off the map and lists until restored. */
+  const hiddenEntries = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const e of [...remoteHidden, ...localHidden]) m.set(e.station_id, e.name);
+    return m;
+  }, [remoteHidden, localHidden]);
+  const all = useMemo(() => everything.filter((s) => !hiddenEntries.has(s.id)), [everything, hiddenEntries]);
   const favorites = useMemo(
-    () => favoriteIds.map((id) => byId.get(id)).filter((s): s is Station => !!s),
-    [favoriteIds, byId],
+    () => favoriteIds.map((id) => byId.get(id)).filter((s): s is Station => !!s && !hiddenEntries.has(s.id)),
+    [favoriteIds, byId, hiddenEntries],
   );
   const favSet = useMemo(() => new Set(favoriteIds), [favoriteIds]);
   const selected = selectedId != null ? byId.get(selectedId) ?? null : null;
@@ -220,6 +249,22 @@ export default function Home() {
     else locate(fly);
   };
 
+  /**
+   * Run a server write with the saved write key, asking for it first if needed.
+   * Without the API (or if you skip the key), `fallback` keeps the change on this device.
+   */
+  const withKey = async (run: (key: string) => Promise<void>, fallback: () => void, error?: string) => {
+    if (!apiUp) return fallback();
+    const key = getWriteKey();
+    if (!key || error) return setKeyPrompt({ run, fallback, error });
+    try {
+      await run(key);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) setKeyPrompt({ run, fallback, error: "That key didn't work. Check it and try again." });
+      else fallback();
+    }
+  };
+
   const saveStation = (n: NewStation) => {
     const api = mapApi.current;
     if (!api) return;
@@ -228,16 +273,86 @@ export default function Home() {
       id: -Date.now(), lat: +at.lat.toFixed(5), lng: +at.lng.toFixed(5),
       name: n.name, brand: n.brand, street: n.street, city: n.city, state: n.state, octanes: n.octanes, custom: true,
     };
-    setCustom((c) => [...c, s]);
     setAdding(false);
-    setSelectedId(s.id);
+    withKey(
+      async (key) => {
+        const saved = await addRemote(s, key);
+        setRemote((r) => [...r, saved]);
+        setSelectedId(saved.id);
+      },
+      () => {
+        setCustom((c) => [...c, s]);
+        setSelectedId(s.id);
+      },
+    );
   };
 
-  const removeStation = (id: number) => {
-    setCustom((c) => c.filter((s) => s.id !== id));
-    setFavoriteIds((ids) => ids.filter((x) => x !== id));
-    setSelectedId(null);
+  const removeStation = (st: Station) => {
+    const drop = () => {
+      setFavoriteIds((ids) => ids.filter((x) => x !== st.id));
+      setSelectedId(null);
+    };
+    if (st.serverId == null) {
+      setCustom((c) => c.filter((x) => x.id !== st.id));
+      return drop();
+    }
+    withKey(async (key) => {
+      await deleteRemote(st.serverId!, key);
+      setRemote((r) => r.filter((x) => x.id !== st.id));
+      drop();
+    }, () => {});
   };
+
+  const hideStation = (st: Station) => {
+    const entry = { station_id: st.id, name: [titleCase(st.name), titleCase(st.city)].filter(Boolean).join(", ") };
+    setSelectedId(null);
+    withKey(
+      async (key) => {
+        await hideRemote(entry, key);
+        setRemoteHidden((h) => [entry, ...h.filter((e) => e.station_id !== st.id)]);
+      },
+      () => setLocalHidden((h) => [entry, ...h.filter((e) => e.station_id !== st.id)]),
+    );
+  };
+
+  const restoreStation = (id: number) => {
+    if (localHidden.some((e) => e.station_id === id)) setLocalHidden((h) => h.filter((e) => e.station_id !== id));
+    if (remoteHidden.some((e) => e.station_id === id)) {
+      withKey(async (key) => {
+        await unhideRemote(id, key);
+        setRemoteHidden((h) => h.filter((e) => e.station_id !== id));
+      }, () => {});
+    }
+  };
+
+  // Once the server and a key are available, move anything saved only on this device up to it.
+  const syncing = useRef(false);
+  useEffect(() => {
+    const key = getWriteKey();
+    if (!apiUp || !key || syncing.current || (!custom.length && !localHidden.length)) return;
+    syncing.current = true;
+    (async () => {
+      try {
+        for (const s of custom) {
+          const saved = await addRemote(s, key);
+          setRemote((r) => [...r, saved]);
+          setCustom((c) => c.filter((x) => x.id !== s.id));
+          setFavoriteIds((ids) => ids.map((x) => (x === s.id ? saved.id : x)));
+        }
+        for (const e of localHidden) {
+          await hideRemote(e, key);
+          setRemoteHidden((h) => [e, ...h.filter((x) => x.station_id !== e.station_id)]);
+          setLocalHidden((h) => h.filter((x) => x.station_id !== e.station_id));
+        }
+      } catch {
+        /* try again next time the app opens */
+      } finally {
+        syncing.current = false;
+      }
+    })();
+    // Runs when the API first answers or a key is entered (keyPrompt closes).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiUp, keyPrompt]);
 
   const selectedMiles = selected && origin ? milesBetween(origin.lat, origin.lng, selected.lat, selected.lng) : null;
 
@@ -328,6 +443,9 @@ export default function Home() {
                   updated={updated}
                   onChange={updateSettings}
                   onShowInstallSteps={() => { setPanel(null); setShowInstall(true); }}
+                  hidden={[...hiddenEntries].map(([id, name]) => ({ id, name: name || titleCase(byId.get(id)?.name ?? "Station") }))}
+                  onRestore={restoreStation}
+                  apiUp={apiUp}
                 />
               </div>
             )}
@@ -355,7 +473,18 @@ export default function Home() {
       <section className="absolute inset-x-0 bottom-0 mx-auto max-w-xl px-3 pb-[max(12px,env(safe-area-inset-bottom))]">
         <div className="sheet overflow-hidden rounded-[28px] bg-[var(--surface-strong)] shadow-[0_-8px_40px_-12px_rgba(15,23,42,0.3)] ring-1 ring-[var(--ring)] backdrop-blur-xl">
           <AutoHeight>
-          {showInstall ? (
+          {keyPrompt ? (
+            <KeyPrompt
+              error={keyPrompt.error}
+              onSubmit={(key) => {
+                setWriteKey(key);
+                const { run, fallback } = keyPrompt;
+                setKeyPrompt(null);
+                withKey(run, fallback);
+              }}
+              onSkip={() => { keyPrompt.fallback(); setKeyPrompt(null); }}
+            />
+          ) : showInstall ? (
             <InstallSheet platform={installPlatform} onClose={() => setShowInstall(false)} />
           ) : adding ? (
             <AddStationForm
@@ -371,7 +500,8 @@ export default function Home() {
               platform={platform}
               favorite={favSet.has(selected.id)}
               onToggleFavorite={() => toggleFavorite(selected.id)}
-              onRemove={selected.custom ? () => removeStation(selected.id) : undefined}
+              onRemove={selected.custom ? () => removeStation(selected) : undefined}
+              onHide={() => hideStation(selected)}
               onClose={() => setSelectedId(null)}
             />
           ) : origin && (loc === "ok" || filtering) ? (
@@ -554,11 +684,13 @@ function NearestList({
 }
 
 function SelectedCard({
-  station: s, miles, platform, favorite, onToggleFavorite, onRemove, onClose,
+  station: s, miles, platform, favorite, onToggleFavorite, onRemove, onHide, onClose,
 }: {
   station: Station; miles: number | null; platform: Platform; favorite: boolean;
-  onToggleFavorite: () => void; onRemove?: () => void; onClose: () => void;
+  onToggleFavorite: () => void; onRemove?: () => void; onHide: () => void; onClose: () => void;
 }) {
+  // Two taps to hide, so a stray tap doesn't make a station vanish.
+  const [confirmHide, setConfirmHide] = useState(false);
   return (
     <div className="px-5 pb-4 pt-5">
       <div className="flex items-start gap-2">
@@ -607,11 +739,19 @@ function SelectedCard({
           <p className="mt-1.5 text-center text-[11px] text-[var(--muted)]">GasBuddy doesn&apos;t list ethanol-free prices.</p>
         </>
       )}
-      {onRemove && (
-        <button onClick={onRemove} className="mt-3 w-full text-center text-[13px] font-medium text-[var(--warn)]">
-          Remove this station
+      <div className="mt-3 flex flex-wrap justify-center gap-x-5 gap-y-1">
+        <button
+          onClick={() => (confirmHide ? onHide() : setConfirmHide(true))}
+          className={`text-[13px] font-medium ${confirmHide ? "font-semibold text-[var(--danger)]" : "text-[var(--muted)]"}`}
+        >
+          {confirmHide ? "Tap again to hide it (restore in Settings)" : "No ethanol-free here anymore"}
         </button>
-      )}
+        {onRemove && (
+          <button onClick={onRemove} className="text-[13px] font-medium text-[var(--warn)]">
+            Remove this station
+          </button>
+        )}
+      </div>
     </div>
   );
 }

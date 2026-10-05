@@ -8,8 +8,10 @@ export type Station = {
   state: string;
   brand: string;
   octanes: number[];
-  /** Added on this device with the + button (negative id). */
+  /** Added with the + button (negative id). */
   custom?: boolean;
+  /** Row id on the e0gas server; absent while it's saved only on this device. */
+  serverId?: number;
 };
 
 type Row = [number, number, string, string, string, string, string, number[], number];

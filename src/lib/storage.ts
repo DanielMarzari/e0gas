@@ -30,3 +30,9 @@ const isStationList = (v: unknown) =>
 
 export const useFavorites = () => useStored<number[]>("e0gas:favorites", [], isIdList);
 export const useCustomStations = () => useStored<Station[]>("e0gas:custom-stations", [], isStationList);
+
+const isHiddenList = (v: unknown) =>
+  Array.isArray(v) && v.every((e) => e && typeof e.station_id === "number");
+/** Stations flagged on this device while the server couldn't be reached. */
+export const useLocalHidden = () =>
+  useStored<{ station_id: number; name: string }[]>("e0gas:hidden", [], isHiddenList);
