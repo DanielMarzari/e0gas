@@ -1,0 +1,46 @@
+name: Deploy to Oracle Cloud
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 9 * * 1" # Mondays — refresh station data from pure-gas.org
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Refresh station data
+        # Falls back to the committed public/stations.json if pure-gas.org is down.
+        continue-on-error: true
+        run: npm run sync
+
+      - name: Build
+        run: npm run build
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy
+        # Static export — Caddy serves /var/www/apps/e0gas directly, no PM2 process.
+        run: |
+          rsync -avz --delete \
+            -e "ssh -i ~/.ssh/deploy_key" \
+            out/ \
+            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/var/www/apps/e0gas/
