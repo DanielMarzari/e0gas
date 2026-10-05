@@ -26,7 +26,7 @@ type LocState = "idle" | "locating" | "denied" | "error" | "ok";
 type Ranked = Station & { miles: number };
 type Panel = "settings" | "filter" | null;
 /** Bottom-sheet list size, changed by dragging or tapping its handle. */
-type SheetSize = "none" | "one" | "three" | "full";
+type SheetSize = "none" | "three" | "six";
 
 const LIST_SIZE = 25;
 /** Shared spring for the search morph, side buttons and bottom sheet. */
@@ -53,7 +53,7 @@ export default function Home() {
   const [loc, setLoc] = useState<LocState>("idle");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   // Start low so the map gets the screen.
-  const [sheetSize, setSheetSize] = useState<SheetSize>("one");
+  const [sheetSize, setSheetSize] = useState<SheetSize>("three");
   const [showInstall, setShowInstall] = useState(false);
   const { platform: installPlatform } = useInstall();
   const [panel, setPanel] = useState<Panel>(null);
@@ -455,8 +455,8 @@ function StationRow({
   );
 }
 
-const SIZES: SheetSize[] = ["none", "one", "three", "full"];
-const ROWS: Record<SheetSize, number> = { none: 0, one: 1, three: 3, full: Infinity };
+const SIZES: SheetSize[] = ["none", "three", "six"];
+const ROWS: Record<SheetSize, number> = { none: 0, three: 3, six: 6 };
 /** Roughly one list row: dragging this far moves one size step. */
 const STEP_PX = 70;
 
@@ -468,13 +468,13 @@ function SheetHandle({ size, onResize }: { size: SheetSize; onResize: (s: SheetS
   return (
     <button
       className="block w-full touch-none pb-1 pt-2.5"
-      aria-label={size === "full" ? "Shrink list" : "Expand list"}
+      aria-label={size === "six" ? "Shrink list" : "Expand list"}
       onPointerDown={(e) => { startY.current = e.clientY; e.currentTarget.setPointerCapture(e.pointerId); }}
       onPointerUp={(e) => {
         const dy = startY.current == null ? 0 : e.clientY - startY.current;
         startY.current = null;
         if (Math.abs(dy) > 20) go(-Math.sign(dy) * Math.max(1, Math.round(Math.abs(dy) / STEP_PX)));
-        else onResize(size === "none" || size === "one" ? "three" : size === "three" ? "full" : "one");
+        else onResize(size === "three" ? "six" : "three");
       }}
     >
       <span className="mx-auto block h-1.5 w-10 rounded-full bg-[var(--hairline)]" />
@@ -513,28 +513,27 @@ function NearestList({
       <div className={`flex items-baseline justify-between px-5 pt-0.5 ${size === "none" ? "pb-4" : "pb-1"}`}>
         <h2 className="text-[17px] font-semibold tracking-tight text-[var(--ink)]">{title}</h2>
         {items.length > 3 && (
-          <button onClick={() => onResize(size === "full" ? "one" : "full")} className="text-[13px] font-medium text-[var(--accent)]">
-            {size === "full" ? "Less" : `Show ${items.length}`}
+          <button onClick={() => onResize(size === "six" ? "three" : "six")} className="text-[13px] font-medium text-[var(--accent)]">
+            {size === "six" ? "Less" : "More"}
           </button>
         )}
       </div>
       {size === "none" ? null : items.length === 0 ? (
         <p className="px-5 pb-5 text-[14px] text-[var(--muted)]">No stations match. Try a wider radius or a different search.</p>
       ) : (
-        <ul className={`overflow-y-auto overscroll-contain px-2 pb-2 ${size === "full" ? "max-h-[62dvh]" : ""}`}>
-          <AnimatePresence initial={false}>
-            {shown.map((s, i) => (
-              <motion.li
-                key={s.id}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.2, delay: Math.min(i, 6) * 0.025 }}
-              >
-                <StationRow s={s} index={i} favorite={favorites.has(s.id)} onSelect={onSelect} />
-              </motion.li>
-            ))}
-          </AnimatePresence>
+        // No exit animation on rows: the card's height animation does the shrinking,
+        // so the list never pops taller before it collapses.
+        <ul className="px-2 pb-2">
+          {shown.map((s, i) => (
+            <motion.li
+              key={s.id}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.2, delay: Math.max(0, i - 3) * 0.03 }}
+            >
+              <StationRow s={s} index={i} favorite={favorites.has(s.id)} onSelect={onSelect} />
+            </motion.li>
+          ))}
         </ul>
       )}
     </div>

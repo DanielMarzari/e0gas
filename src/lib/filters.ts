@@ -12,7 +12,8 @@ export const NO_FILTER: Filter = { query: "", radius: null, minOctane: null, fav
 
 export const MAX_MILES = 50;
 export const MAX_MINUTES = 120;
-export const OCTANE_STEPS = [87, 88, 89, 90, 91, 92, 93];
+/** Minimum-octane stops; the last one is race fuel ("100+"). */
+export const OCTANE_STEPS = [87, 88, 89, 90, 91, 92, 93, 100];
 
 /**
  * Rough drive-time → straight-line radius: ~40 mph on real roads, which wander
