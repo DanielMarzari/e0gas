@@ -15,6 +15,8 @@ export type MapApi = {
   /** Map coordinate under a screen point (CSS px from the top-left of the map). */
   latLngAt: (x: number, y: number) => LatLng;
   center: () => LatLng;
+  /** Frame your location and the nearest stations in the open part of the screen. */
+  recenter: () => void;
   /** Move so p sits at screen height y (default: the middle). */
   flyTo: (p: LatLng, zoom?: number, y?: number) => void;
 };
@@ -218,6 +220,9 @@ export default function StationMap({
     stations: EMPTY, favorites: EMPTY, selected: EMPTY, radius: EMPTY,
   });
   const onSelectRef = useRef(onSelect);
+  // Latest values for recenter(), which the page calls imperatively.
+  const latest = useRef({ user, focus, insets });
+  useEffect(() => { latest.current = { user, focus, insets }; });
   const onViewRef = useRef(onViewChange);
   useEffect(() => { onViewRef.current = onViewChange; }, [onViewChange]);
   const settingsRef = useRef({ shade, accent });
@@ -288,6 +293,7 @@ export default function StationMap({
 
     mapRef.current = map;
     apiRef.current = {
+      recenter: () => frameOnUser(map),
       latLngAt: (x, y) => {
         const p = map.unproject([x, y]);
         return { lat: p.lat, lng: p.lng };
@@ -400,6 +406,23 @@ export default function StationMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [radiusKey, insets.top, insets.bottom]);
 
+  /** Fit you plus the nearest few stations into the part of the map the panels leave open. */
+  function frameOnUser(map: maplibregl.Map) {
+    const { user, focus, insets } = latest.current;
+    if (!user) return;
+    const bounds = new maplibregl.LngLatBounds([user.lng, user.lat], [user.lng, user.lat]);
+    for (const s of focus.slice(0, 3)) bounds.extend([s.lng, s.lat]);
+    map.fitBounds(bounds, {
+      padding: {
+        top: Math.max(110, insets.top + 20),
+        left: 48, right: 48,
+        bottom: Math.max(insets.bottom, Math.round(window.innerHeight * 0.4)),
+      },
+      maxZoom: 14,
+      duration: 1000,
+    });
+  }
+
   // ── User location dot + frame nearest stations ──
   useEffect(() => {
     if (!user) return;
@@ -410,15 +433,7 @@ export default function StationMap({
         userMarkerRef.current = new maplibregl.Marker({ element: el });
       }
       userMarkerRef.current.setLngLat([user.lng, user.lat]).addTo(map);
-      if (!frameUser) return;
-
-      const bounds = new maplibregl.LngLatBounds([user.lng, user.lat], [user.lng, user.lat]);
-      for (const s of focus.slice(0, 3)) bounds.extend([s.lng, s.lat]);
-      map.fitBounds(bounds, {
-        padding: { top: 110, left: 48, right: 48, bottom: Math.round(window.innerHeight * 0.48) },
-        maxZoom: 14,
-        duration: 1200,
-      });
+      if (frameUser) frameOnUser(map);
     });
     // Only reframe when the user's position changes, not on every list update.
     // eslint-disable-next-line react-hooks/exhaustive-deps

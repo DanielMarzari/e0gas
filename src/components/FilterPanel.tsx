@@ -10,7 +10,7 @@ import TickSlider from "@/components/TickSlider";
 const LABEL = "text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]";
 
 export default function FilterPanel({
-  filter, hasLocation, favoriteCount, matches, onChange, onDone,
+  filter, hasLocation, favoriteCount, matches, onChange, onDone, onReset,
 }: {
   filter: Filter;
   hasLocation: boolean;
@@ -18,6 +18,8 @@ export default function FilterPanel({
   matches: number;
   onChange: (f: Filter) => void;
   onDone: () => void;
+  /** After Reset: bring the map back to you. */
+  onReset: () => void;
 }) {
   const set = (patch: Partial<Filter>) => onChange({ ...filter, ...patch });
   // Unit for the distance slider; remembered even while no distance is set.
@@ -100,7 +102,7 @@ export default function FilterPanel({
 
       <div className="mt-3 flex items-center gap-2">
         <button
-          onClick={() => onChange({ ...filter, radius: null, minOctane: null, favoritesOnly: false })}
+          onClick={() => { onChange({ ...filter, radius: null, minOctane: null, favoritesOnly: false }); onReset(); }}
           className="h-11 rounded-xl px-4 text-[14px] font-medium text-[var(--muted)]"
         >
           Reset
