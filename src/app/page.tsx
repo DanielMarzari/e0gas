@@ -27,7 +27,7 @@ type LocState = "idle" | "locating" | "denied" | "error" | "ok";
 type Ranked = Station & { miles: number };
 type Panel = "settings" | "filter" | null;
 /** Bottom-sheet list size, changed by dragging or tapping its handle. */
-type SheetSize = "none" | "three" | "six";
+type SheetSize = "open" | "none";
 
 const LIST_SIZE = 25;
 /** Shared spring for the search morph, side buttons and bottom sheet. */
@@ -54,7 +54,7 @@ export default function Home() {
   const [loc, setLoc] = useState<LocState>("idle");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   // Start low so the map gets the screen.
-  const [sheetSize, setSheetSize] = useState<SheetSize>("three");
+  const [sheetSize, setSheetSize] = useState<SheetSize>("open");
   const [showInstall, setShowInstall] = useState(false);
   const { platform: installPlatform } = useInstall();
   const [panel, setPanel] = useState<Panel>(null);
@@ -141,6 +141,8 @@ export default function Home() {
     if (!user && mapApi.current) setSearchCenter(mapApi.current.center());
   };
   const togglePanel = (p: Panel) => {
+    // Filters get the screen: tuck the list away while they're open.
+    if (p === "filter") setSheetSize(panel === "filter" ? "open" : "none");
     if (p === "filter" && panel !== "filter") pinSearchCenter();
     setPanel((cur) => (cur === p ? null : p));
   };
@@ -159,6 +161,7 @@ export default function Home() {
   const closeSearch = () => {
     setFilter((f) => ({ ...f, query: "" }));
     setSearchOpen(false);
+    if (panel === "filter") setSheetSize("open");
     setPanel(null);
   };
 
@@ -236,7 +239,13 @@ export default function Home() {
       )}
 
       {/* Tap outside an open panel to close it */}
-      {panel && <div className="absolute inset-0 z-10" onClick={() => setPanel(null)} aria-hidden />}
+      {panel && (
+        <div
+          className="absolute inset-0 z-10"
+          onClick={() => { if (panel === "filter") setSheetSize("open"); setPanel(null); }}
+          aria-hidden
+        />
+      )}
 
       {/* ── Search: round button that springs open into the search bar ── */}
       <div className="absolute right-4 top-[max(14px,env(safe-area-inset-top))] z-20 flex justify-end">
@@ -269,7 +278,7 @@ export default function Home() {
               favoriteCount={favorites.length}
               matches={visible.length}
               onChange={setFilter}
-              onDone={() => setPanel(null)}
+              onDone={() => { setPanel(null); setSheetSize("open"); }}
             />
           </motion.div>
         )}
@@ -417,26 +426,20 @@ function StationRow({
   );
 }
 
-const SIZES: SheetSize[] = ["none", "three", "six"];
-const ROWS: Record<SheetSize, number> = { none: 0, three: 3, six: 6 };
-/** Roughly one list row: dragging this far moves one size step. */
-const STEP_PX = 70;
-
-/** Drag the handle up to show more rows, down to show fewer (down to none); tap to toggle. */
+/** Drag the handle up to show the list, down to tuck it away; tap to toggle. */
 function SheetHandle({ size, onResize }: { size: SheetSize; onResize: (s: SheetSize) => void }) {
   const startY = useRef<number | null>(null);
-  const go = (steps: number) =>
-    onResize(SIZES[Math.min(SIZES.length - 1, Math.max(0, SIZES.indexOf(size) + steps))]);
   return (
     <button
       className="block w-full touch-none pb-1 pt-2.5"
-      aria-label={size === "six" ? "Shrink list" : "Expand list"}
+      aria-label={size === "open" ? "Hide list" : "Show list"}
       onPointerDown={(e) => { startY.current = e.clientY; e.currentTarget.setPointerCapture(e.pointerId); }}
       onPointerUp={(e) => {
         const dy = startY.current == null ? 0 : e.clientY - startY.current;
         startY.current = null;
-        if (Math.abs(dy) > 20) go(-Math.sign(dy) * Math.max(1, Math.round(Math.abs(dy) / STEP_PX)));
-        else onResize(size === "three" ? "six" : "three");
+        if (dy < -20) onResize("open");
+        else if (dy > 20) onResize("none");
+        else onResize(size === "open" ? "none" : "open");
       }}
     >
       <span className="mx-auto block h-1.5 w-10 rounded-full bg-[var(--hairline)]" />
@@ -468,15 +471,23 @@ function NearestList({
   title: string; items: Ranked[]; favorites: Set<number>; size: SheetSize;
   onResize: (s: SheetSize) => void; onSelect: (id: number) => void;
 }) {
-  const shown = items.slice(0, ROWS[size]);
+  // The list shows three stations, then scrolls.
+  const listRef = useRef<HTMLUListElement>(null);
+  const [maxH, setMaxH] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    const ul = listRef.current;
+    if (!ul) return;
+    const rows = [...ul.children].slice(0, 3) as HTMLElement[];
+    setMaxH(rows.reduce((h, r) => h + r.offsetHeight, 0) + 8);
+  }, [items, size]);
   return (
     <div>
       <SheetHandle size={size} onResize={onResize} />
       <div className={`flex items-baseline justify-between px-5 pt-0.5 ${size === "none" ? "pb-4" : "pb-1"}`}>
         <h2 className="text-[17px] font-semibold tracking-tight text-[var(--ink)]">{title}</h2>
-        {items.length > 3 && (
-          <button onClick={() => onResize(size === "six" ? "three" : "six")} className="text-[13px] font-medium text-[var(--accent)]">
-            {size === "six" ? "Less" : "More"}
+        {items.length > 0 && (
+          <button onClick={() => onResize(size === "open" ? "none" : "open")} className="text-[13px] font-medium text-[var(--accent)]">
+            {size === "open" ? "Hide" : `Show ${items.length}`}
           </button>
         )}
       </div>
@@ -485,13 +496,13 @@ function NearestList({
       ) : (
         // No exit animation on rows: the card's height animation does the shrinking,
         // so the list never pops taller before it collapses.
-        <ul className="px-2 pb-2">
-          {shown.map((s, i) => (
+        <ul ref={listRef} className="overflow-y-auto overscroll-contain px-2 pb-2" style={{ maxHeight: maxH }}>
+          {items.map((s, i) => (
             <motion.li
               key={s.id}
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.2, delay: Math.max(0, i - 3) * 0.03 }}
+              transition={{ duration: 0.2, delay: Math.min(i, 3) * 0.03 }}
             >
               <StationRow s={s} index={i} favorite={favorites.has(s.id)} onSelect={onSelect} />
             </motion.li>
