@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist } from "next/font/google";
 import "./globals.css";
 import { THEME_BOOT_SCRIPT } from "@/lib/theme";
+import { INSTALL_BOOT_SCRIPT } from "@/lib/installBoot";
 
 const geist = Geist({ variable: "--font-geist", subsets: ["latin"] });
 
@@ -19,7 +20,7 @@ export const viewport: Viewport = {
   viewportFit: "cover",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#eef0ec" },
-    { media: "(prefers-color-scheme: dark)", color: "#191c24" },
+    { media: "(prefers-color-scheme: dark)", color: "#2b303b" },
   ],
 };
 
@@ -28,7 +29,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     // The boot script sets data-theme and accent vars before React hydrates.
     <html lang="en" className={`${geist.variable} h-full antialiased`} suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT + INSTALL_BOOT_SCRIPT }} />
       </head>
       <body className="h-full font-[family-name:var(--font-geist)]">{children}</body>
     </html>

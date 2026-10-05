@@ -13,45 +13,63 @@
   --hairline: rgba(0, 0, 0, 0.15);
   --press: rgba(0, 0, 0, 0.04);
   --on-accent: #ffffff;
+  --user-ring: #ffffff;
   color-scheme: light;
 }
 
-/* Dark: follows the system unless Settings pins light/dark (data-theme on <html>).
-   The accent trio is overridden inline from the chosen color palette. */
+/* Themes live on <html data-theme="light|dim|dark">, set from Settings before first paint.
+   Without it (no JS yet), follow the system and use Dim. The accent trio is set inline
+   from the chosen color palette. */
+:root[data-theme="dim"] {
+  --bg: #2b303b;
+  --ink: #f3f4f6;
+  --muted: #a3aab6;
+  --accent: #34c48b;
+  --accent-soft: rgba(52, 196, 139, 0.14);
+  --warn: #f59e0b;
+  --surface: rgba(52, 58, 70, 0.9);
+  --surface-strong: rgba(52, 58, 70, 0.96);
+  --ring: rgba(255, 255, 255, 0.09);
+  --hairline: rgba(255, 255, 255, 0.2);
+  --press: rgba(255, 255, 255, 0.07);
+  --on-accent: #08291c;
+  --user-ring: #2b303b;
+  color-scheme: dark;
+}
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #191c24;
-    --ink: #f3f4f6;
-    --muted: #9aa1ad;
-    --accent: #34c48b;
-    --accent-soft: rgba(52, 196, 139, 0.14);
-    --warn: #f59e0b;
-    --surface: rgba(31, 34, 43, 0.88);
-    --surface-strong: rgba(31, 34, 43, 0.94);
-    --ring: rgba(255, 255, 255, 0.08);
-    --hairline: rgba(255, 255, 255, 0.18);
-    --press: rgba(255, 255, 255, 0.06);
-    --on-accent: #08291c;
-    color-scheme: dark;
+  :root:not([data-theme]) {
+  --bg: #2b303b;
+  --ink: #f3f4f6;
+  --muted: #a3aab6;
+  --accent: #34c48b;
+  --accent-soft: rgba(52, 196, 139, 0.14);
+  --warn: #f59e0b;
+  --surface: rgba(52, 58, 70, 0.9);
+  --surface-strong: rgba(52, 58, 70, 0.96);
+  --ring: rgba(255, 255, 255, 0.09);
+  --hairline: rgba(255, 255, 255, 0.2);
+  --press: rgba(255, 255, 255, 0.07);
+  --on-accent: #08291c;
+  --user-ring: #2b303b;
+  color-scheme: dark;
   }
-  :root:not([data-theme="light"]) .user-dot { border-color: #191c24; }
 }
 :root[data-theme="dark"] {
   --bg: #191c24;
   --ink: #f3f4f6;
-  --muted: #9aa1ad;
+  --muted: #a3aab6;
   --accent: #34c48b;
   --accent-soft: rgba(52, 196, 139, 0.14);
   --warn: #f59e0b;
   --surface: rgba(31, 34, 43, 0.88);
   --surface-strong: rgba(31, 34, 43, 0.94);
-  --ring: rgba(255, 255, 255, 0.08);
-  --hairline: rgba(255, 255, 255, 0.18);
-  --press: rgba(255, 255, 255, 0.06);
+  --ring: rgba(255, 255, 255, 0.09);
+  --hairline: rgba(255, 255, 255, 0.2);
+  --press: rgba(255, 255, 255, 0.07);
   --on-accent: #08291c;
+  --user-ring: #191c24;
   color-scheme: dark;
 }
-:root[data-theme="dark"] .user-dot { border-color: #191c24; }
 
 html, body {
   height: 100%;
@@ -70,7 +88,7 @@ html, body {
 /* User location dot */
 .user-dot {
   width: 18px; height: 18px; border-radius: 9999px;
-  background: #2563eb; border: 3px solid #fff;
+  background: #2563eb; border: 3px solid var(--user-ring);
   box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.45), 0 2px 6px rgba(0,0,0,0.25);
   animation: pulse 2s infinite;
 }
