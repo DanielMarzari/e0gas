@@ -14,11 +14,12 @@ import { type Filter, NO_FILTER, applyFilter, filterCount, isActive, radiusMiles
 import { useCustomStations, useFavorites } from "@/lib/storage";
 import SettingsPanel from "@/components/SettingsPanel";
 import FilterPanel from "@/components/FilterPanel";
+import SearchControl from "@/components/SearchControl";
 import InstallSheet from "@/components/InstallSheet";
 import { useInstall } from "@/lib/install";
 import { geocode } from "@/lib/geocode";
 import AddStationForm, { type NewStation } from "@/components/AddStationForm";
-import { CloseIcon, FilterIcon, GearIcon, LocateIcon, PinIcon, PlusIcon, SearchIcon, StarIcon } from "@/components/icons";
+import { CloseIcon, GearIcon, LocateIcon, PinIcon, PlusIcon, StarIcon } from "@/components/icons";
 
 const StationMap = dynamic(() => import("@/components/StationMap"), { ssr: false });
 
@@ -237,85 +238,46 @@ export default function Home() {
       {/* Tap outside an open panel to close it */}
       {panel && <div className="absolute inset-0 z-10" onClick={() => setPanel(null)} aria-hidden />}
 
-      {/* ── Search bar: grows out of the search button ── */}
-      {searchOpen && (
-        <div className="absolute inset-x-0 top-0 z-20 px-4 pt-[max(14px,env(safe-area-inset-top))]">
-          <div className="mx-auto max-w-xl">
-            <motion.div
-              layoutId="search"
-              transition={SPRING}
-              style={{ borderRadius: 24 }}
-              className="flex h-12 items-center overflow-hidden bg-[var(--surface-strong)] shadow-[0_6px_24px_-8px_rgba(15,23,42,0.25)] ring-1 ring-[var(--ring)] backdrop-blur-md focus-within:ring-[var(--accent)]"
-            >
-              <motion.span layout="position" className="pl-4 pr-2 text-[var(--accent)]"><SearchIcon size={18} /></motion.span>
-              <input
-                autoFocus
-                value={filter.query}
-                onChange={(e) => setFilter({ ...filter, query: e.target.value })}
-                onFocus={() => setPanel(null)}
-                onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-                placeholder="Search brand, town, octane"
-                aria-label="Search stations"
-                enterKeyHint="search"
-                className="h-full min-w-0 flex-1 bg-transparent text-[16px] text-[var(--ink)] outline-none placeholder:text-[var(--muted)]"
-              />
-              <button
-                onClick={() => togglePanel("filter")}
-                aria-label="Filters"
-                aria-expanded={panel === "filter"}
-                className={`relative grid h-10 w-10 shrink-0 place-items-center rounded-full transition ${panel === "filter" || filterCount(filter) ? "bg-[var(--accent)] text-[var(--on-accent)]" : "text-[var(--accent)]"}`}
-              >
-                <FilterIcon />
-                {filterCount(filter) > 0 && panel !== "filter" && <Badge n={filterCount(filter)} />}
-              </button>
-              <button onClick={closeSearch} aria-label="Close search" className="mr-1 grid h-10 w-10 shrink-0 place-items-center text-[var(--muted)]">
-                <CloseIcon />
-              </button>
-            </motion.div>
-            <AnimatePresence>
-            {panel === "filter" && (
-              <motion.div
-                className="mt-2.5 origin-top"
-                initial={{ opacity: 0, y: -8, scale: 0.98 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: -8, scale: 0.98 }}
-                transition={{ duration: 0.18 }}
-              >
-                <FilterPanel
-                  filter={filter}
-                  hasLocation={!!user}
-                  favoriteCount={favorites.length}
-                  matches={visible.length}
-                  onChange={setFilter}
-                  onDone={() => setPanel(null)}
-                />
-              </motion.div>
-            )}
-            </AnimatePresence>
-          </div>
-        </div>
-      )}
+      {/* ── Search: round button that springs open into the search bar ── */}
+      <div className="absolute right-4 top-[max(14px,env(safe-area-inset-top))] z-20 flex justify-end">
+        <SearchControl
+          open={searchOpen}
+          query={filter.query}
+          onQueryChange={(q) => setFilter({ ...filter, query: q })}
+          onOpen={openSearch}
+          onClose={closeSearch}
+          onInputFocus={() => setPanel(null)}
+          filterCount={filterCount(filter)}
+          filterOpen={panel === "filter"}
+          onToggleFilter={() => togglePanel("filter")}
+          closedBadge={isActive(filter) ? filterCount(filter) || 1 : 0}
+        />
+      </div>
 
-      {/* ── Side buttons: search · settings · add · locate ── */}
+      <AnimatePresence>
+        {searchOpen && panel === "filter" && (
+          <motion.div
+            className="absolute inset-x-4 top-[calc(max(14px,env(safe-area-inset-top))+60px)] z-20 ml-auto max-w-xl origin-top"
+            initial={{ opacity: 0, y: -8, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -8, scale: 0.98 }}
+            transition={{ duration: 0.18 }}
+          >
+            <FilterPanel
+              filter={filter}
+              hasLocation={!!user}
+              favoriteCount={favorites.length}
+              matches={visible.length}
+              onChange={setFilter}
+              onDone={() => setPanel(null)}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Side buttons under the search spot: settings · add · locate ── */}
       {panel !== "filter" && (
-        <motion.div
-          className="absolute right-4 top-[max(14px,env(safe-area-inset-top))] z-20 flex flex-col items-end gap-2.5"
-          animate={{ y: searchOpen ? 60 : 0 }}
-          transition={SPRING}
-        >
-          {!searchOpen && (
-            <motion.button
-              layoutId="search"
-              transition={SPRING}
-              style={{ borderRadius: 24 }}
-              onClick={openSearch}
-              aria-label="Search"
-              className={`relative ${FLOAT_BUTTON}`}
-            >
-              <motion.span layout="position"><SearchIcon /></motion.span>
-              {isActive(filter) && <Badge n={filterCount(filter) || 1} />}
-            </motion.button>
-          )}
+        <div className="absolute right-4 top-[calc(max(14px,env(safe-area-inset-top))+60px)] z-20 flex flex-col items-end gap-2.5">
           <div className="relative">
             <button onClick={() => togglePanel("settings")} aria-label="Settings" aria-expanded={panel === "settings"} className={FLOAT_BUTTON}>
               <GearIcon />
@@ -347,7 +309,7 @@ export default function Home() {
               </button>
             </>
           )}
-        </motion.div>
+        </div>
       )}
 
       {/* ── Bottom sheet ── */}
@@ -618,13 +580,5 @@ function Octanes({ octanes }: { octanes: number[] }) {
         </span>
       ))}
     </div>
-  );
-}
-
-function Badge({ n }: { n: number }) {
-  return (
-    <span className="absolute -right-0.5 -top-0.5 grid h-5 min-w-5 place-items-center rounded-full bg-[#f5b301] px-1 text-[11px] font-bold text-white ring-2 ring-[var(--surface)]">
-      {n}
-    </span>
   );
 }
