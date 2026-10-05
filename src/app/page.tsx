@@ -93,21 +93,6 @@ export default function Home() {
         accent={accent}
       />
 
-      {/* ── Brand ── */}
-      <header className="pointer-events-none absolute inset-x-0 top-0 flex justify-center pt-[max(14px,env(safe-area-inset-top))] px-4">
-        <div className="pointer-events-auto flex items-center gap-2.5 rounded-full bg-[var(--surface)] py-2 pl-2 pr-4 shadow-[0_6px_24px_-8px_rgba(15,23,42,0.25)] ring-1 ring-[var(--ring)] backdrop-blur-md">
-          <span className="grid h-8 w-8 place-items-center rounded-full bg-[var(--accent)] text-[13px] font-bold tracking-tight text-[var(--on-accent)]">
-            E0
-          </span>
-          <div className="leading-tight">
-            <div className="text-[15px] font-semibold tracking-tight text-[var(--ink)]">e0 gas</div>
-            <div className="text-[11px] text-[var(--muted)]">
-              {stations.length ? `${stations.length.toLocaleString()} ethanol-free stations` : "Loading stations…"}
-            </div>
-          </div>
-        </div>
-      </header>
-
       {/* ── Settings + re-center ── */}
       <div className="absolute right-4 top-[max(14px,env(safe-area-inset-top))] z-20 flex flex-col items-end gap-2.5">
         <button
@@ -269,7 +254,7 @@ function SelectedCard({
         {...mapsLinkProps(s, platform)}
         className="mt-4 flex h-13 w-full items-center justify-center gap-2 rounded-2xl bg-[var(--accent)] py-3.5 text-[16px] font-semibold text-[var(--on-accent)] transition active:scale-[0.98]"
       >
-        Open in Google Maps
+        Prices &amp; directions in Google Maps
       </a>
     </div>
   );
