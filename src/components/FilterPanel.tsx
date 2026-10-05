@@ -1,7 +1,6 @@
 "use client";
 
 import { type Filter, type Radius, MILE_OPTIONS, MINUTE_OPTIONS, radiusMiles } from "@/lib/filters";
-import { CloseIcon, SearchIcon } from "@/components/icons";
 
 const LABEL = "text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]";
 const OCTANES = ["87", "88", "89", "90", "91", "93", "91+"];
@@ -18,7 +17,7 @@ function Chip({ on, onClick, children }: { on: boolean; onClick: () => void; chi
   );
 }
 
-export default function SearchPanel({
+export default function FilterPanel({
   filter, brands, hasLocation, matches, onChange, onDone,
 }: {
   filter: Filter;
@@ -36,25 +35,9 @@ export default function SearchPanel({
 
   return (
     <div className="rounded-3xl bg-[var(--surface-strong)] p-4 shadow-[0_10px_40px_-12px_rgba(15,23,42,0.35)] ring-1 ring-[var(--ring)] backdrop-blur-xl">
-      <label className="flex items-center gap-2 rounded-xl bg-[var(--press)] px-3 ring-1 ring-[var(--ring)] focus-within:ring-[var(--accent)]">
-        <span className="text-[var(--muted)]"><SearchIcon size={18} /></span>
-        <input
-          autoFocus
-          value={filter.query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && onDone()}
-          placeholder="Brand, town or octane (90, 91+)"
-          className="h-11 min-w-0 flex-1 bg-transparent text-[16px] text-[var(--ink)] outline-none placeholder:text-[var(--muted)]"
-          enterKeyHint="search"
-        />
-        {filter.query && (
-          <button onClick={() => setQuery("")} aria-label="Clear search" className="text-[var(--muted)]"><CloseIcon /></button>
-        )}
-      </label>
-
       {brands.length > 0 && (
         <>
-          <div className={`mt-3 ${LABEL}`}>Brand</div>
+          <div className={LABEL}>Brand</div>
           <div className="mt-1.5 flex flex-wrap gap-1.5">
             {brands.map((b) => (
               <Chip key={b} on={filter.query.toLowerCase() === b.toLowerCase()} onClick={() => toggleQuery(b)}>{b}</Chip>
@@ -63,7 +46,7 @@ export default function SearchPanel({
         </>
       )}
 
-      <div className={`mt-3 ${LABEL}`}>Octane</div>
+      <div className={`${brands.length ? "mt-3" : ""} ${LABEL}`}>Octane</div>
       <div className="mt-1.5 flex flex-wrap gap-1.5">
         {OCTANES.map((o) => (
           <Chip key={o} on={filter.query === o} onClick={() => toggleQuery(o)}>{o}</Chip>
