@@ -2,7 +2,8 @@
 
 Find the nearest ethanol-free (E0) gas station in the US — **https://e0gas.danmarzari.com**
 
-- Mobile-first map (MapLibre + OpenFreeMap, same basemap styling as ROAM)
+- Mobile-first map (MapLibre + OpenFreeMap, same basemap styling as ROAM), opening on the Lehigh Valley
+- Settings (gear, top right): accent color and Auto/Light/Dark, saved per device
 - "Share my location" sorts every station by straight-line distance
 - Tapping a station opens the business in Google Maps (searched by name + address)
 

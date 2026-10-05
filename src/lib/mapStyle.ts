@@ -4,12 +4,13 @@ import type maplibregl from "maplibre-gl";
 export const basemapUrl = (dark: boolean) =>
   `https://tiles.openfreemap.org/styles/${dark ? "dark" : "positron"}`;
 
-/** Initial view: Pennsylvania. */
-export const START_BOUNDS: [[number, number], [number, number]] = [[-80.52, 39.72], [-74.69, 42.27]];
+/** Initial view before location is shared: Lehigh Valley, Kutztown to Easton. */
+export const START_BOUNDS: [[number, number], [number, number]] = [[-75.80, 40.47], [-75.19, 40.73]];
 
+/** Non-accent station colors; the accent comes from the chosen theme palette. */
 export const STATION_COLORS = {
-  light: { accent: "#0f8a5f", stroke: "#ffffff", selected: "#111827", label: "#1f2937", halo: "#ffffff" },
-  dark: { accent: "#34c48b", stroke: "#191c24", selected: "#f9fafb", label: "#d0d4e0", halo: "#191c24" },
+  light: { stroke: "#ffffff", selected: "#111827", label: "#1f2937", halo: "#ffffff", count: "#ffffff" },
+  dark: { stroke: "#191c24", selected: "#f9fafb", label: "#d0d4e0", halo: "#191c24", count: "#08130e" },
 };
 
 const HIGHWAY_LAYERS = [

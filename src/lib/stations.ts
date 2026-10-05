@@ -76,6 +76,9 @@ export function mapsLinkProps(s: Station, platform: Platform): { href: string; t
 }
 
 export function titleCase(s: string): string {
-  if (s !== s.toUpperCase() && s !== s.toLowerCase()) return s;
-  return s.toLowerCase().replace(/\b([a-z])/g, (c) => c.toUpperCase());
+  // Source data has some half-fixed names like "Rutter’S".
+  if (s !== s.toUpperCase() && s !== s.toLowerCase()) return s.replace(/([a-z])(['’])S\b/g, "$1$2s");
+  // Only capitalize after whitespace/punctuation that starts a word — not after
+  // apostrophes, so "RUTTER’S" becomes "Rutter’s", not "Rutter’S".
+  return s.toLowerCase().replace(/(^|[\s\-/(&.#])([a-z])/g, (_, pre, c) => pre + c.toUpperCase());
 }
