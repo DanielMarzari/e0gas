@@ -13,7 +13,7 @@ import {
 import { type Filter, NO_FILTER, applyFilter, filterCount, isActive, radiusMiles } from "@/lib/filters";
 import { useCustomStations, useFavorites, useLocalHidden } from "@/lib/storage";
 import {
-  type HiddenEntry, addRemote, deleteRemote, fetchHidden, fetchRemote, hideRemote, unhideRemote,
+  type HiddenEntry, ApiError, addRemote, deleteRemote, fetchHidden, fetchRemote, hideRemote, unhideRemote,
 } from "@/lib/remote";
 import SettingsPanel from "@/components/SettingsPanel";
 import FilterPanel from "@/components/FilterPanel";
@@ -67,6 +67,7 @@ export default function Home() {
   // Start low so the map gets the screen.
   const [sheetSize, setSheetSize] = useState<SheetSize>("open");
   const [showInstall, setShowInstall] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
   const { platform: installPlatform } = useInstall();
   const [panel, setPanel] = useState<Panel>(null);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -122,6 +123,10 @@ export default function Home() {
     for (const e of [...remoteHidden, ...localHidden]) m.set(e.station_id, e.name);
     return m;
   }, [remoteHidden, localHidden]);
+  const hiddenList = useMemo(
+    () => [...hiddenEntries].map(([id, name]) => ({ id, name: name || titleCase(byId.get(id)?.name ?? "Station") })),
+    [hiddenEntries, byId],
+  );
   const all = useMemo(() => everything.filter((s) => !hiddenEntries.has(s.id)), [everything, hiddenEntries]);
   const favorites = useMemo(
     () => favoriteIds.map((id) => byId.get(id)).filter((s): s is Station => !!s && !hiddenEntries.has(s.id)),
@@ -257,9 +262,23 @@ export default function Home() {
     if (!apiUp) return fallback();
     try {
       await run();
-    } catch {
+    } catch (e) {
       fallback();
+      if (e instanceof ApiError && e.status === 429) {
+        flash("The server takes 4 changes an hour per phone. Try again later.");
+      } else {
+        flash("Couldn't reach the server. Saved on this phone for now.");
+      }
     }
+  };
+
+  /** A short message over the bottom card. */
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const flash = (msg: string) => {
+    setToast(msg);
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 4500);
   };
 
   const saveStation = (n: NewStation) => {
@@ -440,8 +459,8 @@ export default function Home() {
                   updated={updated}
                   onChange={updateSettings}
                   onShowInstallSteps={() => { setPanel(null); setShowInstall(true); }}
-                  hidden={[...hiddenEntries].map(([id, name]) => ({ id, name: name || titleCase(byId.get(id)?.name ?? "Station") }))}
-                  onRestore={restoreStation}
+                  hidden={hiddenList}
+                  onShowHidden={() => { setPanel(null); setSelectedId(null); setAdding(false); setShowHidden(true); }}
                 />
               </div>
             )}
@@ -465,11 +484,27 @@ export default function Home() {
         </div>
       )}
 
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            role="status"
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="pointer-events-none absolute left-4 right-[76px] top-[max(14px,env(safe-area-inset-top))] z-30 rounded-2xl bg-[var(--ink)] px-4 py-2.5 text-[13px] font-medium leading-snug text-[var(--bg)] shadow-lg"
+          >
+            {toast}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* ── Bottom sheet ── */}
       <section className="absolute inset-x-0 bottom-0 mx-auto max-w-xl px-3 pb-[max(12px,env(safe-area-inset-bottom))]">
         <div className="sheet overflow-hidden rounded-[28px] bg-[var(--surface-strong)] shadow-[0_-8px_40px_-12px_rgba(15,23,42,0.3)] ring-1 ring-[var(--ring)] backdrop-blur-xl">
           <AutoHeight>
-          {showInstall ? (
+          {showHidden ? (
+            <HiddenCard items={hiddenList} onRestore={restoreStation} onClose={() => setShowHidden(false)} />
+          ) : showInstall ? (
             <InstallSheet platform={installPlatform} onClose={() => setShowInstall(false)} />
           ) : adding ? (
             <AddStationForm
@@ -778,6 +813,43 @@ function Octanes({ octanes }: { octanes: number[] }) {
           {o}
         </span>
       ))}
+    </div>
+  );
+}
+
+/** Stations flagged "no ethanol-free anymore", taking over the bottom card; tap Restore to bring one back. */
+function HiddenCard({
+  items, onRestore, onClose,
+}: { items: { id: number; name: string }[]; onRestore: (id: number) => void; onClose: () => void }) {
+  return (
+    <div className="pb-3 pt-4">
+      <div className="flex items-center justify-between gap-3 px-5">
+        <div>
+          <h2 className="text-[18px] font-semibold tracking-tight text-[var(--ink)]">Hidden stations</h2>
+          <p className="mt-0.5 text-[12px] text-[var(--muted)]">Marked as no longer selling ethanol-free gas.</p>
+        </div>
+        <button onClick={onClose} aria-label="Close" className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[var(--press)] text-[var(--muted)]">
+          <CloseIcon />
+        </button>
+      </div>
+      {items.length === 0 ? (
+        <p className="px-5 pb-2 pt-3 text-[14px] text-[var(--muted)]">Nothing hidden. Every station is back on the map.</p>
+      ) : (
+        <ul className="mt-2 max-h-[45dvh] space-y-1.5 overflow-y-auto overscroll-contain px-3">
+          {items.map((h) => (
+            <li key={h.id} className="flex items-center gap-3 rounded-2xl bg-[var(--danger)]/10 px-3 py-2.5">
+              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[var(--danger)] text-white"><WarnIcon size={15} /></span>
+              <span className="min-w-0 flex-1 truncate text-[15px] font-medium text-[var(--danger)]">{h.name}</span>
+              <button
+                onClick={() => onRestore(h.id)}
+                className="shrink-0 rounded-full bg-[var(--accent)] px-3 py-1.5 text-[13px] font-semibold text-[var(--on-accent)] active:scale-95"
+              >
+                Restore
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

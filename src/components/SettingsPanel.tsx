@@ -1,7 +1,6 @@
 "use client";
 
 import { type Mode, type Settings, type Shade, PALETTES, paletteSwatch } from "@/lib/theme";
-import { useState } from "react";
 import { useInstall } from "@/lib/install";
 import { ShareIcon } from "@/components/icons";
 
@@ -14,7 +13,7 @@ const MODES: { id: Mode; label: string }[] = [
 const LABEL = "text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]";
 
 export default function SettingsPanel({
-  settings, shade, updated, onChange, onShowInstallSteps, hidden, onRestore,
+  settings, shade, updated, onChange, onShowInstallSteps, hidden, onShowHidden,
 }: {
   settings: Settings; shade: Shade; updated: string;
   onChange: (p: Partial<Settings>) => void;
@@ -22,10 +21,10 @@ export default function SettingsPanel({
   onShowInstallSteps: () => void;
   /** Stations flagged "no ethanol-free anymore". */
   hidden: { id: number; name: string }[];
-  onRestore: (id: number) => void;
+  /** Open the hidden-stations card. */
+  onShowHidden: () => void;
 }) {
   const { installed, install } = useInstall();
-  const [showHidden, setShowHidden] = useState(false);
   const link = "underline decoration-[var(--hairline)] underline-offset-2";
 
   return (
@@ -77,27 +76,9 @@ export default function SettingsPanel({
           None. Use &ldquo;No ethanol-free here anymore&rdquo; on a station to hide it.
         </p>
       ) : (
-        <>
-          <button
-            onClick={() => setShowHidden((v) => !v)}
-            className="mt-1.5 text-[13px] font-semibold text-[var(--danger)]"
-            aria-expanded={showHidden}
-          >
-            {showHidden ? "Hide list" : `See hidden (${hidden.length})`}
-          </button>
-          {showHidden && (
-            <ul className="mt-1.5 space-y-1">
-              {hidden.map((h) => (
-                <li key={h.id} className="flex items-center gap-2 rounded-lg bg-[var(--danger)]/10 px-2 py-1.5">
-                  <span className="min-w-0 flex-1 truncate text-[13px] text-[var(--danger)]">{h.name}</span>
-                  <button onClick={() => onRestore(h.id)} className="shrink-0 text-[12px] font-semibold text-[var(--accent)]">
-                    Restore
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </>
+        <button onClick={onShowHidden} className="mt-1.5 text-[13px] font-semibold text-[var(--danger)]">
+          See hidden ({hidden.length})
+        </button>
       )}
 
       <div className={`mt-4 ${LABEL}`}>About</div>
