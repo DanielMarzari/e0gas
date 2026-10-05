@@ -37,6 +37,10 @@ type Props = {
   /** Theme accent color for stations and cluster bubbles. */
   accent: string;
   apiRef: RefObject<MapApi | null>;
+  /** Screen space covered by panels (px); the radius circle is framed in what's left. */
+  insets: { top: number; bottom: number };
+  /** Called with the visible area whenever the map stops moving. */
+  onViewChange: (b: { west: number; south: number; east: number; north: number }) => void;
 };
 
 /** Layers a tap can select a station (or expand a cluster) from, in priority order. */
@@ -201,7 +205,7 @@ function installStationLayers(map: maplibregl.Map, shade: Shade, accent: string)
 }
 
 export default function StationMap({
-  stations, favorites, user, frameUser, focus, selected, onSelect, radius, shade, accent, apiRef,
+  stations, favorites, user, frameUser, focus, selected, onSelect, radius, shade, accent, apiRef, insets, onViewChange,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -214,6 +218,8 @@ export default function StationMap({
     stations: EMPTY, favorites: EMPTY, selected: EMPTY, radius: EMPTY,
   });
   const onSelectRef = useRef(onSelect);
+  const onViewRef = useRef(onViewChange);
+  useEffect(() => { onViewRef.current = onViewChange; }, [onViewChange]);
   const settingsRef = useRef({ shade, accent });
   useEffect(() => { onSelectRef.current = onSelect; }, [onSelect]);
 
@@ -253,6 +259,13 @@ export default function StationMap({
         map.fire("e0:ready");
       }
     });
+
+    const reportView = () => {
+      const b = map.getBounds();
+      onViewRef.current({ west: b.getWest(), south: b.getSouth(), east: b.getEast(), north: b.getNorth() });
+    };
+    map.on("moveend", reportView);
+    map.once("load", reportView);
 
     map.on("click", async (e) => {
       const layers = HIT_LAYERS.filter((id) => map.getLayer(id));
@@ -375,12 +388,17 @@ export default function StationMap({
       const bounds = new maplibregl.LngLatBounds();
       for (const p of ring.coordinates[0]) bounds.extend(p as [number, number]);
       map.fitBounds(bounds, {
-        padding: { top: 90, left: 24, right: 24, bottom: Math.round(window.innerHeight * 0.42) },
+        // Keep at least 120px of map for the circle, however much the panels cover.
+        padding: {
+          top: Math.min(insets.top, window.innerHeight - insets.bottom - 120),
+          left: 24, right: 24,
+          bottom: insets.bottom,
+        },
         duration: 900,
       });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [radiusKey]);
+  }, [radiusKey, insets.top, insets.bottom]);
 
   // ── User location dot + frame nearest stations ──
   useEffect(() => {

@@ -119,11 +119,7 @@ export default function AddStationForm({
               <p className="text-[12px] text-[var(--warn)]">Couldn&apos;t find that address. Add the town, or drag the map instead.</p>
             )}
           </>
-        ) : (
-          <p className="flex h-11 items-center px-1 text-[13px] text-[var(--muted)]">
-            Pin moved to where you are. Drag the map if the pumps are a bit off.
-          </p>
-        )}
+        ) : null}
         <input className={INPUT} value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (e.g. Rutter's Palmer)" required />
         <input className={INPUT} value={brand} onChange={(e) => setBrand(e.target.value)} placeholder="Brand (optional)" />
       </div>
