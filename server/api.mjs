@@ -1,36 +1,32 @@
 // e0 gas station API: stations people add with the + button, stored in SQLite.
 //
 //   GET    /api/stations        list (public)
-//   POST   /api/stations        add one (needs the write key)
-//   DELETE /api/stations/:id    remove one (needs the write key)
+//   POST   /api/stations        add one
+//   DELETE /api/stations/:id    archive one (kept in the db with deleted_at set)
 //   GET    /api/hidden          stations flagged "no ethanol-free anymore" (public)
-//   POST   /api/hidden          flag one {station_id, name} (needs the write key)
-//   DELETE /api/hidden/:id      restore one (needs the write key)
+//   POST   /api/hidden          flag one {station_id, name}
+//   DELETE /api/hidden/:id      restore one
 //
-// Flags never delete anything: pure-gas.org stations keep coming back from the
-// weekly sync, and the app simply hides any station whose id is flagged here.
+// No login: anyone using the app can add, archive, hide and restore. Nothing is
+// ever erased (archived stations keep their row; flags only hide), and writes are
+// rate-limited per IP, so a bad actor can't do lasting damage or flood the db.
 //
 // Zero dependencies: Node's built-in HTTP server and node:sqlite (Node 22.13+).
 // Caddy proxies /api/* here; see server/README.md for setup.
 //
 // Env:
-//   E0GAS_WRITE_KEY  required; sent by the app as the x-e0gas-key header to add/remove
 //   E0GAS_DB         SQLite file (default /var/lib/e0gas/stations.db)
 //   PORT             default 8787 (listens on 127.0.0.1 only)
 import { createServer } from "node:http";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { timingSafeEqual } from "node:crypto";
 
-const KEY = process.env.E0GAS_WRITE_KEY ?? "";
 const DB_PATH = process.env.E0GAS_DB ?? "/var/lib/e0gas/stations.db";
 const PORT = Number(process.env.PORT ?? 8787);
 const MAX_STATIONS = 5000;
-if (KEY.length < 8) {
-  console.error("Set E0GAS_WRITE_KEY (8+ characters) before starting.");
-  process.exit(1);
-}
+/** Writes allowed per IP per hour. */
+const WRITES_PER_HOUR = 60;
 
 mkdirSync(dirname(DB_PATH), { recursive: true });
 const db = new DatabaseSync(DB_PATH);
@@ -50,20 +46,31 @@ db.exec(`CREATE TABLE IF NOT EXISTS hidden (
 const listHidden = db.prepare("SELECT * FROM hidden ORDER BY created_at DESC");
 const hideStmt = db.prepare("INSERT OR REPLACE INTO hidden (station_id, name) VALUES (?, ?) RETURNING *");
 const unhideStmt = db.prepare("DELETE FROM hidden WHERE station_id = ?");
-const listStmt = db.prepare("SELECT * FROM stations ORDER BY id");
+// Older databases predate archiving.
+if (!db.prepare("PRAGMA table_info(stations)").all().some((c) => c.name === "deleted_at")) {
+  db.exec("ALTER TABLE stations ADD COLUMN deleted_at TEXT");
+}
+const listStmt = db.prepare("SELECT * FROM stations WHERE deleted_at IS NULL ORDER BY id");
 const countStmt = db.prepare("SELECT COUNT(*) AS n FROM stations");
 const insertStmt = db.prepare(
   "INSERT INTO stations (lat, lng, name, brand, street, city, state, octanes) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
 );
-const deleteStmt = db.prepare("DELETE FROM stations WHERE id = ?");
+const archiveStmt = db.prepare("UPDATE stations SET deleted_at = datetime('now') WHERE id = ? AND deleted_at IS NULL");
 
-const row = (r) => ({ ...r, octanes: JSON.parse(r.octanes) });
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- drop the archive column from responses
+const row = ({ deleted_at, ...r }) => ({ ...r, octanes: JSON.parse(r.octanes) });
 const text = (v, max) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 
-function authorized(req) {
-  const got = Buffer.from(String(req.headers["x-e0gas-key"] ?? ""));
-  const want = Buffer.from(KEY);
-  return got.length === want.length && timingSafeEqual(got, want);
+/** Simple per-IP write budget (Caddy passes the client IP in X-Forwarded-For). */
+const writes = new Map();
+function overLimit(req) {
+  const ip = String(req.headers["x-forwarded-for"] ?? req.socket.remoteAddress ?? "").split(",")[0].trim();
+  const now = Date.now();
+  const recent = (writes.get(ip) ?? []).filter((t) => now - t < 3_600_000);
+  recent.push(now);
+  writes.set(ip, recent);
+  if (writes.size > 10_000) writes.clear();
+  return recent.length > WRITES_PER_HOUR;
 }
 
 function send(res, status, body) {
@@ -106,7 +113,7 @@ createServer(async (req, res) => {
       return send(res, 200, listStmt.all().map(row));
     }
     if (url.pathname === "/api/stations" && req.method === "POST") {
-      if (!authorized(req)) return send(res, 401, { error: "wrong or missing key" });
+      if (overLimit(req)) return send(res, 429, { error: "too many changes, try again later" });
       if (countStmt.get().n >= MAX_STATIONS) return send(res, 507, { error: "station limit reached" });
       const v = parseStation(await readJson(req));
       if (typeof v === "string") return send(res, 400, { error: v });
@@ -114,15 +121,15 @@ createServer(async (req, res) => {
     }
     const del = url.pathname.match(/^\/api\/stations\/(\d+)$/);
     if (del && req.method === "DELETE") {
-      if (!authorized(req)) return send(res, 401, { error: "wrong or missing key" });
-      deleteStmt.run(Number(del[1]));
+      if (overLimit(req)) return send(res, 429, { error: "too many changes, try again later" });
+      archiveStmt.run(Number(del[1]));
       return send(res, 204);
     }
     if (url.pathname === "/api/hidden" && req.method === "GET") {
       return send(res, 200, listHidden.all());
     }
     if (url.pathname === "/api/hidden" && req.method === "POST") {
-      if (!authorized(req)) return send(res, 401, { error: "wrong or missing key" });
+      if (overLimit(req)) return send(res, 429, { error: "too many changes, try again later" });
       const b = await readJson(req);
       const id = Number(b.station_id);
       if (!Number.isSafeInteger(id)) return send(res, 400, { error: "station_id must be an integer" });
@@ -130,7 +137,7 @@ createServer(async (req, res) => {
     }
     const unhide = url.pathname.match(/^\/api\/hidden\/(-?\d+)$/);
     if (unhide && req.method === "DELETE") {
-      if (!authorized(req)) return send(res, 401, { error: "wrong or missing key" });
+      if (overLimit(req)) return send(res, 429, { error: "too many changes, try again later" });
       unhideStmt.run(Number(unhide[1]));
       return send(res, 204);
     }

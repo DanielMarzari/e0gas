@@ -2,19 +2,11 @@ import type { Station } from "@/lib/stations";
 
 /** Same-origin API on the e0gas server (Caddy proxies /api to server/api.mjs). */
 const API = "/api/stations";
-const KEY_STORAGE = "e0gas:write-key";
 
 type Row = Omit<Station, "custom" | "serverId"> & { id: number };
 
 /** Server rows get small negative ids so they never collide with pure-gas.org ids. */
 const toStation = (r: Row): Station => ({ ...r, id: -r.id, serverId: r.id, custom: true });
-
-export function getWriteKey(): string {
-  try { return localStorage.getItem(KEY_STORAGE) ?? ""; } catch { return ""; }
-}
-export function setWriteKey(k: string) {
-  try { localStorage.setItem(KEY_STORAGE, k); } catch { /* private mode */ }
-}
 
 /** Stations saved on the server, or null if the API isn't reachable (e.g. not set up yet). */
 export async function fetchRemote(): Promise<Station[] | null> {
@@ -31,10 +23,10 @@ export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
 
-export async function addRemote(s: Station, key: string): Promise<Station> {
+export async function addRemote(s: Station): Promise<Station> {
   const res = await fetch(API, {
     method: "POST",
-    headers: { "content-type": "application/json", "x-e0gas-key": key },
+    headers: { "content-type": "application/json" },
     body: JSON.stringify({
       lat: s.lat, lng: s.lng, name: s.name, brand: s.brand,
       street: s.street, city: s.city, state: s.state, octanes: s.octanes,
@@ -44,8 +36,8 @@ export async function addRemote(s: Station, key: string): Promise<Station> {
   return toStation(await res.json());
 }
 
-export async function deleteRemote(serverId: number, key: string) {
-  const res = await fetch(`${API}/${serverId}`, { method: "DELETE", headers: { "x-e0gas-key": key } });
+export async function deleteRemote(serverId: number) {
+  const res = await fetch(`${API}/${serverId}`, { method: "DELETE" });
   if (!res.ok) throw new ApiError(res.status, "delete failed");
 }
 
@@ -63,16 +55,16 @@ export async function fetchHidden(): Promise<HiddenEntry[] | null> {
   }
 }
 
-export async function hideRemote(e: HiddenEntry, key: string) {
+export async function hideRemote(e: HiddenEntry) {
   const res = await fetch(HIDDEN, {
     method: "POST",
-    headers: { "content-type": "application/json", "x-e0gas-key": key },
+    headers: { "content-type": "application/json" },
     body: JSON.stringify(e),
   });
   if (!res.ok) throw new ApiError(res.status, "hide failed");
 }
 
-export async function unhideRemote(stationId: number, key: string) {
-  const res = await fetch(`${HIDDEN}/${stationId}`, { method: "DELETE", headers: { "x-e0gas-key": key } });
+export async function unhideRemote(stationId: number) {
+  const res = await fetch(`${HIDDEN}/${stationId}`, { method: "DELETE" });
   if (!res.ok) throw new ApiError(res.status, "restore failed");
 }
