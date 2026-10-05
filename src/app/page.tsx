@@ -24,7 +24,7 @@ import InstallSheet from "@/components/InstallSheet";
 import { useInstall } from "@/lib/install";
 import { geocode } from "@/lib/geocode";
 import AddStationForm, { type NewStation } from "@/components/AddStationForm";
-import { CloseIcon, GearIcon, LocateIcon, PinIcon, PlusIcon, StarIcon } from "@/components/icons";
+import { CloseIcon, GearIcon, LocateIcon, PinIcon, PlusIcon, StarIcon, WarnIcon } from "@/components/icons";
 
 const StationMap = dynamic(() => import("@/components/StationMap"), { ssr: false });
 
@@ -218,7 +218,14 @@ export default function Home() {
     setSearchOpen(false);
     if (panel === "filter") setSheetSize("open");
     setPanel(null);
+    setRecenterTick((t) => t + 1);
   };
+
+  // Re-frame the map on you after the layout settles (panels may have just closed).
+  const [recenterTick, setRecenterTick] = useState(0);
+  useEffect(() => {
+    if (recenterTick) mapApi.current?.recenter();
+  }, [recenterTick]);
 
   const toggleFavorite = (id: number) =>
     setFavoriteIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
@@ -423,6 +430,7 @@ export default function Home() {
               matches={visible.length}
               onChange={setFilter}
               onDone={() => { setPanel(null); setSheetSize("open"); }}
+              onReset={() => setRecenterTick((t) => t + 1)}
             />
           </motion.div>
         )}
@@ -689,36 +697,67 @@ function SelectedCard({
   station: Station; miles: number | null; platform: Platform; favorite: boolean;
   onToggleFavorite: () => void; onRemove?: () => void; onHide: () => void; onClose: () => void;
 }) {
-  // Two taps to hide, so a stray tap doesn't make a station vanish.
+  // Two taps to hide, so a stray tap doesn't make a station vanish; it folds back after a few seconds.
   const [confirmHide, setConfirmHide] = useState(false);
+  useEffect(() => {
+    if (!confirmHide) return;
+    const t = setTimeout(() => setConfirmHide(false), 4000);
+    return () => clearTimeout(t);
+  }, [confirmHide]);
+  const ROUND = "grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[var(--press)]";
   return (
     <div className="px-5 pb-4 pt-5">
       <div className="flex items-start gap-2">
-        <div className="min-w-0 flex-1">
-          <h2 className="text-[19px] font-semibold leading-tight tracking-tight text-[var(--ink)]">{titleCase(s.name)}</h2>
-          <p className="mt-1 text-[14px] text-[var(--muted)]">{address(s)}</p>
-          <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[13px] text-[var(--muted)]">
-            {miles != null && <span className="font-semibold text-[var(--ink)]">{formatMiles(miles)} away</span>}
-            {s.brand && s.brand !== "NONE" && <span>{titleCase(s.brand)}</span>}
-            {s.custom && <span className="rounded-md bg-[var(--press)] px-1.5 text-[11px] font-medium">Added by you</span>}
-          </div>
-          <Octanes octanes={s.octanes} />
-        </div>
-        <button
-          onClick={onToggleFavorite}
-          aria-label={favorite ? "Remove from favorites" : "Add to favorites"}
-          aria-pressed={favorite}
-          className={`grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[var(--press)] active:scale-90 ${favorite ? "text-[#f5b301]" : "text-[var(--muted)]"}`}
+        <h2 className="min-w-0 flex-1 pt-1 text-[19px] font-semibold leading-tight tracking-tight text-[var(--ink)]">{titleCase(s.name)}</h2>
+        <motion.button
+          layout
+          transition={{ type: "spring", stiffness: 500, damping: 34 }}
+          onClick={() => (confirmHide ? onHide() : setConfirmHide(true))}
+          aria-label={confirmHide ? "Confirm: no ethanol-free here, hide this station" : "Report no ethanol-free here"}
+          style={{ borderRadius: 18 }}
+          className={`flex h-9 shrink-0 items-center gap-1.5 overflow-hidden ${confirmHide ? "bg-[var(--danger)] px-3 text-white" : "w-9 justify-center bg-[var(--press)] text-[var(--muted)]"}`}
         >
-          <StarIcon size={18} filled={favorite} />
-        </button>
+          <motion.span layout="position" className="shrink-0"><WarnIcon size={17} /></motion.span>
+          {confirmHide && (
+            <motion.span
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1, transition: { delay: 0.08 } }}
+              className="whitespace-nowrap text-[13px] font-semibold"
+            >
+              Confirm no E0?
+            </motion.span>
+          )}
+        </motion.button>
+        {!confirmHide && (
+          <button
+            onClick={onToggleFavorite}
+            aria-label={favorite ? "Remove from favorites" : "Add to favorites"}
+            aria-pressed={favorite}
+            className={`${ROUND} active:scale-90 ${favorite ? "text-[#f5b301]" : "text-[var(--muted)]"}`}
+          >
+            <StarIcon size={18} filled={favorite} />
+          </button>
+        )}
         <button
-          onClick={onClose}
-          aria-label="Close"
-          className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[var(--press)] text-[var(--muted)] active:scale-95"
+          onClick={() => (confirmHide ? setConfirmHide(false) : onClose())}
+          aria-label={confirmHide ? "Cancel" : "Close"}
+          className={`${ROUND} text-[var(--muted)] active:scale-95`}
         >
           <CloseIcon />
         </button>
+      </div>
+      <div>
+        <p className="mt-1 text-[14px] text-[var(--muted)]">{address(s)}</p>
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-[var(--muted)]">
+          {miles != null && <span className="font-semibold text-[var(--ink)]">{formatMiles(miles)} away</span>}
+          {s.brand && s.brand !== "NONE" && <span>{titleCase(s.brand)}</span>}
+          {s.octanes.map((o) => (
+            <span key={o} className="rounded-md bg-[var(--accent-soft)] px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-[var(--accent)]">
+              {o}
+            </span>
+          ))}
+          {s.custom && <span className="rounded-md bg-[var(--press)] px-1.5 text-[11px] font-medium">Added by you</span>}
+        </div>
       </div>
       <a
         {...mapsLinkProps(s, platform)}
@@ -739,19 +778,11 @@ function SelectedCard({
           <p className="mt-1.5 text-center text-[11px] text-[var(--muted)]">GasBuddy doesn&apos;t list ethanol-free prices.</p>
         </>
       )}
-      <div className="mt-3 flex flex-wrap justify-center gap-x-5 gap-y-1">
-        <button
-          onClick={() => (confirmHide ? onHide() : setConfirmHide(true))}
-          className={`text-[13px] font-medium ${confirmHide ? "font-semibold text-[var(--danger)]" : "text-[var(--muted)]"}`}
-        >
-          {confirmHide ? "Tap again to hide it (restore in Settings)" : "No ethanol-free here anymore"}
+      {onRemove && (
+        <button onClick={onRemove} className="mt-2.5 w-full text-center text-[12px] font-medium text-[var(--muted)]">
+          Delete this station you added
         </button>
-        {onRemove && (
-          <button onClick={onRemove} className="text-[13px] font-medium text-[var(--warn)]">
-            Remove this station
-          </button>
-        )}
-      </div>
+      )}
     </div>
   );
 }
