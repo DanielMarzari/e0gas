@@ -3,7 +3,6 @@
 import { type Mode, type Settings, type Shade, PALETTES, paletteSwatch } from "@/lib/theme";
 import { useState } from "react";
 import { useInstall } from "@/lib/install";
-import { getWriteKey, setWriteKey } from "@/lib/remote";
 import { ShareIcon } from "@/components/icons";
 
 const MODES: { id: Mode; label: string }[] = [
@@ -15,7 +14,7 @@ const MODES: { id: Mode; label: string }[] = [
 const LABEL = "text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]";
 
 export default function SettingsPanel({
-  settings, shade, updated, onChange, onShowInstallSteps, hidden, onRestore, apiUp,
+  settings, shade, updated, onChange, onShowInstallSteps, hidden, onRestore,
 }: {
   settings: Settings; shade: Shade; updated: string;
   onChange: (p: Partial<Settings>) => void;
@@ -24,12 +23,9 @@ export default function SettingsPanel({
   /** Stations flagged "no ethanol-free anymore". */
   hidden: { id: number; name: string }[];
   onRestore: (id: number) => void;
-  /** Whether the e0gas server answered (adds and flags are shared through it). */
-  apiUp: boolean;
 }) {
   const { installed, install } = useInstall();
   const [showHidden, setShowHidden] = useState(false);
-  const [key, setKey] = useState(() => getWriteKey());
   const link = "underline decoration-[var(--hairline)] underline-offset-2";
 
   return (
@@ -101,20 +97,6 @@ export default function SettingsPanel({
               ))}
             </ul>
           )}
-        </>
-      )}
-
-      {apiUp && (
-        <>
-          <div className={`mt-4 ${LABEL}`}>Server key</div>
-          <input
-            type="password"
-            value={key}
-            onChange={(e) => { setKey(e.target.value); setWriteKey(e.target.value.trim()); }}
-            placeholder="Needed to add or hide stations"
-            autoComplete="off"
-            className="mt-1.5 h-10 w-full rounded-xl bg-[var(--press)] px-3 text-[16px] text-[var(--ink)] outline-none ring-1 ring-[var(--ring)] placeholder:text-[13px] placeholder:text-[var(--muted)] focus:ring-[var(--accent)]"
-          />
         </>
       )}
 

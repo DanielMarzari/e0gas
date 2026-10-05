@@ -13,10 +13,8 @@ import {
 import { type Filter, NO_FILTER, applyFilter, filterCount, isActive, radiusMiles } from "@/lib/filters";
 import { useCustomStations, useFavorites, useLocalHidden } from "@/lib/storage";
 import {
-  type HiddenEntry, ApiError, addRemote, deleteRemote, fetchHidden, fetchRemote, getWriteKey, hideRemote,
-  setWriteKey, unhideRemote,
+  type HiddenEntry, addRemote, deleteRemote, fetchHidden, fetchRemote, hideRemote, unhideRemote,
 } from "@/lib/remote";
-import KeyPrompt from "@/components/KeyPrompt";
 import SettingsPanel from "@/components/SettingsPanel";
 import FilterPanel from "@/components/FilterPanel";
 import SearchControl from "@/components/SearchControl";
@@ -62,8 +60,6 @@ export default function Home() {
   const [localHidden, setLocalHidden] = useLocalHidden();
   /** Whether the e0gas API answered; without it, adds and flags stay on this device. */
   const [apiUp, setApiUp] = useState(false);
-  /** A server write waiting for the write key. */
-  const [keyPrompt, setKeyPrompt] = useState<{ run: (key: string) => Promise<void>; fallback: () => void; error?: string } | null>(null);
   const [favoriteIds, setFavoriteIds] = useFavorites();
   const [user, setUser] = useState<LatLng | null>(null);
   const [loc, setLoc] = useState<LocState>("idle");
@@ -256,19 +252,13 @@ export default function Home() {
     else locate(fly);
   };
 
-  /**
-   * Run a server write with the saved write key, asking for it first if needed.
-   * Without the API (or if you skip the key), `fallback` keeps the change on this device.
-   */
-  const withKey = async (run: (key: string) => Promise<void>, fallback: () => void, error?: string) => {
+  /** Save a change to the server; if it's unreachable, `fallback` keeps it on this device (synced later). */
+  const write = async (run: () => Promise<void>, fallback: () => void) => {
     if (!apiUp) return fallback();
-    const key = getWriteKey();
-    if (!key || error) return setKeyPrompt({ run, fallback, error });
     try {
-      await run(key);
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 401) setKeyPrompt({ run, fallback, error: "That key didn't work. Check it and try again." });
-      else fallback();
+      await run();
+    } catch {
+      fallback();
     }
   };
 
@@ -281,9 +271,9 @@ export default function Home() {
       name: n.name, brand: n.brand, street: n.street, city: n.city, state: n.state, octanes: n.octanes, custom: true,
     };
     setAdding(false);
-    withKey(
-      async (key) => {
-        const saved = await addRemote(s, key);
+    write(
+      async () => {
+        const saved = await addRemote(s);
         setRemote((r) => [...r, saved]);
         setSelectedId(saved.id);
       },
@@ -303,8 +293,8 @@ export default function Home() {
       setCustom((c) => c.filter((x) => x.id !== st.id));
       return drop();
     }
-    withKey(async (key) => {
-      await deleteRemote(st.serverId!, key);
+    write(async () => {
+      await deleteRemote(st.serverId!);
       setRemote((r) => r.filter((x) => x.id !== st.id));
       drop();
     }, () => {});
@@ -313,9 +303,9 @@ export default function Home() {
   const hideStation = (st: Station) => {
     const entry = { station_id: st.id, name: [titleCase(st.name), titleCase(st.city)].filter(Boolean).join(", ") };
     setSelectedId(null);
-    withKey(
-      async (key) => {
-        await hideRemote(entry, key);
+    write(
+      async () => {
+        await hideRemote(entry);
         setRemoteHidden((h) => [entry, ...h.filter((e) => e.station_id !== st.id)]);
       },
       () => setLocalHidden((h) => [entry, ...h.filter((e) => e.station_id !== st.id)]),
@@ -325,29 +315,28 @@ export default function Home() {
   const restoreStation = (id: number) => {
     if (localHidden.some((e) => e.station_id === id)) setLocalHidden((h) => h.filter((e) => e.station_id !== id));
     if (remoteHidden.some((e) => e.station_id === id)) {
-      withKey(async (key) => {
-        await unhideRemote(id, key);
+      write(async () => {
+        await unhideRemote(id);
         setRemoteHidden((h) => h.filter((e) => e.station_id !== id));
       }, () => {});
     }
   };
 
-  // Once the server and a key are available, move anything saved only on this device up to it.
+  // Once the server answers, move anything saved only on this device up to it.
   const syncing = useRef(false);
   useEffect(() => {
-    const key = getWriteKey();
-    if (!apiUp || !key || syncing.current || (!custom.length && !localHidden.length)) return;
+    if (!apiUp || syncing.current || (!custom.length && !localHidden.length)) return;
     syncing.current = true;
     (async () => {
       try {
         for (const s of custom) {
-          const saved = await addRemote(s, key);
+          const saved = await addRemote(s);
           setRemote((r) => [...r, saved]);
           setCustom((c) => c.filter((x) => x.id !== s.id));
           setFavoriteIds((ids) => ids.map((x) => (x === s.id ? saved.id : x)));
         }
         for (const e of localHidden) {
-          await hideRemote(e, key);
+          await hideRemote(e);
           setRemoteHidden((h) => [e, ...h.filter((x) => x.station_id !== e.station_id)]);
           setLocalHidden((h) => h.filter((x) => x.station_id !== e.station_id));
         }
@@ -357,9 +346,9 @@ export default function Home() {
         syncing.current = false;
       }
     })();
-    // Runs when the API first answers or a key is entered (keyPrompt closes).
+    // Runs once when the API first answers.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiUp, keyPrompt]);
+  }, [apiUp]);
 
   const selectedMiles = selected && origin ? milesBetween(origin.lat, origin.lng, selected.lat, selected.lng) : null;
 
@@ -453,7 +442,6 @@ export default function Home() {
                   onShowInstallSteps={() => { setPanel(null); setShowInstall(true); }}
                   hidden={[...hiddenEntries].map(([id, name]) => ({ id, name: name || titleCase(byId.get(id)?.name ?? "Station") }))}
                   onRestore={restoreStation}
-                  apiUp={apiUp}
                 />
               </div>
             )}
@@ -481,18 +469,7 @@ export default function Home() {
       <section className="absolute inset-x-0 bottom-0 mx-auto max-w-xl px-3 pb-[max(12px,env(safe-area-inset-bottom))]">
         <div className="sheet overflow-hidden rounded-[28px] bg-[var(--surface-strong)] shadow-[0_-8px_40px_-12px_rgba(15,23,42,0.3)] ring-1 ring-[var(--ring)] backdrop-blur-xl">
           <AutoHeight>
-          {keyPrompt ? (
-            <KeyPrompt
-              error={keyPrompt.error}
-              onSubmit={(key) => {
-                setWriteKey(key);
-                const { run, fallback } = keyPrompt;
-                setKeyPrompt(null);
-                withKey(run, fallback);
-              }}
-              onSkip={() => { keyPrompt.fallback(); setKeyPrompt(null); }}
-            />
-          ) : showInstall ? (
+          {showInstall ? (
             <InstallSheet platform={installPlatform} onClose={() => setShowInstall(false)} />
           ) : adding ? (
             <AddStationForm
