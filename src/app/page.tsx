@@ -9,7 +9,7 @@ import type { LatLng, MapApi } from "@/components/StationMap";
 import {
   type Settings, DEFAULT_PALETTE, loadSettings, saveSettings, applyTheme, paletteSwatch, resolveShade,
 } from "@/lib/theme";
-import { type Filter, NO_FILTER, applyFilter, isActive, radiusMiles, radiusLabel } from "@/lib/filters";
+import { type Filter, NO_FILTER, applyFilter, filterCount, isActive, radiusMiles } from "@/lib/filters";
 import { useCustomStations, useFavorites } from "@/lib/storage";
 import SettingsPanel from "@/components/SettingsPanel";
 import FilterPanel from "@/components/FilterPanel";
@@ -49,11 +49,12 @@ export default function Home() {
   const [user, setUser] = useState<LatLng | null>(null);
   const [loc, setLoc] = useState<LocState>("idle");
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [sheetSize, setSheetSize] = useState<SheetSize>("normal");
+  // Start low so the map gets the screen.
+  const [sheetSize, setSheetSize] = useState<SheetSize>("min");
   const [showInstall, setShowInstall] = useState(false);
   const { platform: installPlatform } = useInstall();
   const [panel, setPanel] = useState<Panel>(null);
-  const [showFavorites, setShowFavorites] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [adding, setAdding] = useState(false);
   const [filter, setFilter] = useState<Filter>(NO_FILTER);
   /** Search origin when location isn't shared: the map center when search was opened. */
@@ -95,7 +96,7 @@ export default function Home() {
 
   const origin = user ?? searchCenter;
   const filtering = isActive(filter);
-  const visible = useMemo(() => applyFilter(all, filter, origin), [all, filter, origin]);
+  const visible = useMemo(() => applyFilter(all, filter, origin, favSet), [all, filter, origin, favSet]);
   // Favorites draw as stars on their own layer; leave them out of the plain dots.
   const mapStations = useMemo(() => visible.filter((s) => !favSet.has(s.id)), [visible, favSet]);
 
@@ -108,24 +109,6 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [origin, visible, all.length],
   );
-  const rankedFavorites = useMemo(
-    () => rank(favorites),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [favorites, origin],
-  );
-
-  /** Most common brands within ~30 mi of where you're looking, for search chips. */
-  const nearbyBrands = useMemo(() => {
-    if (panel !== "filter" || !origin) return [];
-    const counts = new Map<string, number>();
-    for (const s of all) {
-      if (!s.brand || s.brand === "NONE" || milesBetween(origin.lat, origin.lng, s.lat, s.lng) > 30) continue;
-      const b = titleCase(s.brand);
-      counts.set(b, (counts.get(b) ?? 0) + 1);
-    }
-    return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([b]) => b);
-  }, [panel, origin, all]);
-
   // ── Actions ──
   const locate = () => {
     if (!("geolocation" in navigator)) return setLoc("error");
@@ -152,10 +135,19 @@ export default function Home() {
 
   const select = (id: number | null) => {
     setSelectedId(id);
-    if (id != null) {
-      setSheetSize("normal");
-      setPanel(null);
-    }
+    if (id != null) setPanel(null);
+  };
+
+  const openSearch = () => {
+    pinSearchCenter();
+    setSearchOpen(true);
+    setPanel(null);
+  };
+  /** Collapse the search bar; filters stay on (the search button shows a badge). */
+  const closeSearch = () => {
+    setFilter((f) => ({ ...f, query: "" }));
+    setSearchOpen(false);
+    setPanel(null);
   };
 
   const toggleFavorite = (id: number) =>
@@ -165,7 +157,7 @@ export default function Home() {
     if (adding) return;
     setPanel(null);
     setSelectedId(null);
-    setShowFavorites(false);
+    setSearchOpen(false);
     setFilter(NO_FILTER); // so the new station isn't hidden by an old search
     setAdding(true);
     // Zoom in on whatever is already under the pin (or on you), keeping it under the pin.
@@ -202,7 +194,8 @@ export default function Home() {
   const selectedMiles = selected && origin ? milesBetween(origin.lat, origin.lng, selected.lat, selected.lng) : null;
 
   return (
-    <div className="fixed inset-0 overflow-hidden bg-[var(--bg)]">
+    // dvh: stays clear of mobile browser toolbars, so the bottom card is never hidden behind them.
+    <div className="fixed inset-x-0 top-0 h-[100dvh] overflow-hidden bg-[var(--bg)]">
       <StationMap
         stations={mapStations}
         favorites={favorites}
@@ -225,84 +218,82 @@ export default function Home() {
       {/* Tap outside an open panel to close it */}
       {panel && <div className="absolute inset-0 z-10" onClick={() => setPanel(null)} aria-hidden />}
 
-      {/* ── Top bar: search (with filters) · settings, favorites, add, locate ── */}
-      <div className="absolute inset-x-0 top-0 z-20 flex items-start gap-2.5 px-4 pt-[max(14px,env(safe-area-inset-top))]">
-        <div className="min-w-0 flex-1">
-          <div className="flex h-12 items-center rounded-full bg-[var(--surface)] shadow-[0_6px_24px_-8px_rgba(15,23,42,0.25)] ring-1 ring-[var(--ring)] backdrop-blur-md focus-within:ring-[var(--accent)]">
-            <span className="pl-4 pr-2 text-[var(--accent)]"><SearchIcon size={18} /></span>
-            <input
-              value={filter.query}
-              onChange={(e) => {
-                if (!filter.query) pinSearchCenter();
-                setFilter({ ...filter, query: e.target.value });
-              }}
-              onFocus={() => setPanel(null)}
-              onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-              placeholder="Search brand, town, octane"
-              aria-label="Search stations"
-              enterKeyHint="search"
-              className="h-full min-w-0 flex-1 bg-transparent text-[16px] text-[var(--ink)] outline-none placeholder:text-[var(--muted)]"
-            />
-            {filter.query && (
-              <button onClick={() => setFilter({ ...filter, query: "" })} aria-label="Clear search" className="grid h-full w-9 place-items-center text-[var(--muted)]">
+      {/* ── Search bar: opens from the search button ── */}
+      {searchOpen && (
+        <div className="absolute inset-x-0 top-0 z-20 px-4 pt-[max(14px,env(safe-area-inset-top))]">
+          <div className="mx-auto max-w-xl">
+            <div className="flex h-12 items-center rounded-full bg-[var(--surface-strong)] shadow-[0_6px_24px_-8px_rgba(15,23,42,0.25)] ring-1 ring-[var(--ring)] backdrop-blur-md focus-within:ring-[var(--accent)]">
+              <span className="pl-4 pr-2 text-[var(--accent)]"><SearchIcon size={18} /></span>
+              <input
+                autoFocus
+                value={filter.query}
+                onChange={(e) => setFilter({ ...filter, query: e.target.value })}
+                onFocus={() => setPanel(null)}
+                onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+                placeholder="Search brand, town, octane"
+                aria-label="Search stations"
+                enterKeyHint="search"
+                className="h-full min-w-0 flex-1 bg-transparent text-[16px] text-[var(--ink)] outline-none placeholder:text-[var(--muted)]"
+              />
+              <button
+                onClick={() => togglePanel("filter")}
+                aria-label="Filters"
+                aria-expanded={panel === "filter"}
+                className={`relative grid h-10 w-10 shrink-0 place-items-center rounded-full transition ${panel === "filter" || filterCount(filter) ? "bg-[var(--accent)] text-[var(--on-accent)]" : "text-[var(--accent)]"}`}
+              >
+                <FilterIcon />
+                {filterCount(filter) > 0 && panel !== "filter" && <Badge n={filterCount(filter)} />}
+              </button>
+              <button onClick={closeSearch} aria-label="Close search" className="mr-1 grid h-10 w-10 shrink-0 place-items-center text-[var(--muted)]">
                 <CloseIcon />
               </button>
+            </div>
+            {panel === "filter" && (
+              <div className="mt-2.5">
+                <FilterPanel
+                  filter={filter}
+                  hasLocation={!!user}
+                  favoriteCount={favorites.length}
+                  matches={visible.length}
+                  onChange={setFilter}
+                  onDone={() => setPanel(null)}
+                />
+              </div>
             )}
-            <button
-              onClick={() => togglePanel("filter")}
-              aria-label="Filters"
-              aria-expanded={panel === "filter"}
-              className={`relative mr-1 grid h-10 w-10 shrink-0 place-items-center rounded-full transition ${panel === "filter" || filter.radius ? "bg-[var(--accent)] text-[var(--on-accent)]" : "text-[var(--accent)]"}`}
-            >
-              <FilterIcon />
-            </button>
           </div>
-          {filter.radius && panel !== "filter" && (
-            <button
-              onClick={() => setFilter({ ...filter, radius: null })}
-              className="ml-2 mt-2 inline-flex items-center gap-1.5 rounded-full bg-[var(--surface)] py-1 pl-3 pr-2 text-[13px] font-medium text-[var(--ink)] shadow-[0_4px_16px_-8px_rgba(15,23,42,0.3)] ring-1 ring-[var(--ring)] backdrop-blur-md"
-            >
-              Within {radiusLabel(filter.radius)} <span className="text-[var(--muted)]"><CloseIcon size={13} /></span>
+        </div>
+      )}
+
+      {/* ── Side buttons: search · settings · add · locate ── */}
+      {panel !== "filter" && (
+        <div
+          className="absolute right-4 z-20 flex flex-col items-end gap-2.5"
+          style={{ top: `calc(max(14px, env(safe-area-inset-top)) + ${searchOpen ? 60 : 0}px)` }}
+        >
+          {!searchOpen && (
+            <button onClick={openSearch} aria-label="Search" className={`relative ${FLOAT_BUTTON}`}>
+              <SearchIcon />
+              {isActive(filter) && <Badge n={filterCount(filter) || 1} />}
             </button>
           )}
-          {panel === "filter" && (
-            <div className="mt-2.5">
-              <FilterPanel
-                filter={filter}
-                brands={nearbyBrands}
-                hasLocation={!!user}
-                matches={visible.length}
-                onChange={setFilter}
-                onDone={() => setPanel(null)}
-              />
-            </div>
-          )}
-        </div>
-
-        <div className="relative flex flex-col items-end gap-2.5">
-          <button onClick={() => togglePanel("settings")} aria-label="Settings" aria-expanded={panel === "settings"} className={FLOAT_BUTTON}>
-            <GearIcon />
-          </button>
-          {panel === "settings" ? (
-            <div className="absolute right-0 top-[58px]">
-              <SettingsPanel
-                settings={settings}
-                shade={shade}
-                updated={updated}
-                onChange={updateSettings}
-                onShowInstallSteps={() => { setPanel(null); setShowInstall(true); }}
-              />
-            </div>
-          ) : panel !== "filter" && (
+          <div className="relative">
+            <button onClick={() => togglePanel("settings")} aria-label="Settings" aria-expanded={panel === "settings"} className={FLOAT_BUTTON}>
+              <GearIcon />
+            </button>
+            {panel === "settings" && (
+              <div className="absolute right-0 top-[58px]">
+                <SettingsPanel
+                  settings={settings}
+                  shade={shade}
+                  updated={updated}
+                  onChange={updateSettings}
+                  onShowInstallSteps={() => { setPanel(null); setShowInstall(true); }}
+                />
+              </div>
+            )}
+          </div>
+          {panel !== "settings" && (
             <>
-              <button
-                onClick={() => { setShowFavorites((v) => !v); setSelectedId(null); setAdding(false); }}
-                aria-label="Favorites"
-                aria-pressed={showFavorites}
-                className={`${FLOAT_BUTTON} ${showFavorites ? "!bg-[var(--accent)] !text-[var(--on-accent)]" : ""}`}
-              >
-                <StarIcon filled={showFavorites || favorites.length > 0} />
-              </button>
               <button
                 onClick={startAdding}
                 aria-label="Add a station"
@@ -311,15 +302,13 @@ export default function Home() {
               >
                 <PlusIcon />
               </button>
-              {user && (
-                <button onClick={locate} aria-label="Update my location" className={FLOAT_BUTTON}>
-                  <LocateIcon spinning={loc === "locating"} />
-                </button>
-              )}
+              <button onClick={locate} aria-label={user ? "Update my location" : "Share my location"} className={FLOAT_BUTTON}>
+                <LocateIcon spinning={loc === "locating"} />
+              </button>
             </>
           )}
         </div>
-      </div>
+      )}
 
       {/* ── Bottom sheet ── */}
       <section className="absolute inset-x-0 bottom-0 mx-auto max-w-xl px-3 pb-[max(12px,env(safe-area-inset-bottom))]">
@@ -338,11 +327,9 @@ export default function Home() {
               onRemove={selected.custom ? () => removeStation(selected.id) : undefined}
               onClose={() => setSelectedId(null)}
             />
-          ) : showFavorites ? (
-            <FavoritesList items={rankedFavorites} onSelect={select} onClose={() => setShowFavorites(false)} />
           ) : origin && (loc === "ok" || filtering) ? (
             <NearestList
-              title={filtering ? (user ? "Matches near you" : "Matches near map center") : "Nearest to you"}
+              title={filter.favoritesOnly ? "Favorites" : filtering ? (user ? "Matches near you" : "Matches near map center") : "Nearest to you"}
               items={nearest}
               favorites={favSet}
               size={sheetSize}
@@ -362,34 +349,29 @@ export default function Home() {
 
 function Intro({ loc, onLocate }: { loc: LocState; onLocate: () => void }) {
   return (
-    <div className="px-6 pb-5 pt-6">
-      <h1 className="text-[22px] font-semibold leading-tight tracking-tight text-[var(--ink)]">
-        Pure gas, close by.
-      </h1>
-      <p className="mt-1.5 text-[14px] leading-snug text-[var(--muted)]">
-        Find the nearest ethanol-free (E0) station — for boats, small engines, classics, or just better mileage.
-      </p>
-      <button
-        onClick={onLocate}
-        disabled={loc === "locating"}
-        className="mt-5 flex h-14 w-full items-center justify-center gap-2.5 rounded-2xl bg-[var(--accent)] text-[16px] font-semibold text-[var(--on-accent)] shadow-[0_10px_24px_-10px_var(--accent)] transition active:scale-[0.98] disabled:opacity-80"
-      >
-        <LocateIcon spinning={loc === "locating"} />
-        {loc === "locating" ? "Finding you…" : "Share my location"}
-      </button>
+    <div className="px-5 py-4">
+      <div className="flex items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <h1 className="text-[17px] font-semibold leading-tight tracking-tight text-[var(--ink)]">Pure gas, close by.</h1>
+          <p className="mt-0.5 text-[13px] leading-snug text-[var(--muted)]">Nearest ethanol-free (E0) stations.</p>
+        </div>
+        <button
+          onClick={onLocate}
+          disabled={loc === "locating"}
+          className="flex h-11 shrink-0 items-center gap-2 rounded-full bg-[var(--accent)] px-4 text-[15px] font-semibold text-[var(--on-accent)] shadow-[0_8px_20px_-10px_var(--accent)] transition active:scale-[0.97] disabled:opacity-80"
+        >
+          <LocateIcon size={18} spinning={loc === "locating"} />
+          {loc === "locating" ? "Finding…" : "Share location"}
+        </button>
+      </div>
       {loc === "denied" && (
-        <p className="mt-3 text-center text-[13px] text-[var(--warn)]">
-          Location is blocked. Allow it for this site in your browser settings, then try again.
+        <p className="mt-2.5 text-[13px] leading-snug text-[var(--warn)]">
+          Location is blocked. Allow it for this site in your browser settings (iPhone: Settings → Privacy → Location Services → Safari Websites), then try again.
         </p>
       )}
       {loc === "error" && (
-        <p className="mt-3 text-center text-[13px] text-[var(--warn)]">
+        <p className="mt-2.5 text-[13px] leading-snug text-[var(--warn)]">
           Couldn&apos;t get your location. Check that location services are on and try again.
-        </p>
-      )}
-      {loc === "idle" && (
-        <p className="mt-3 text-center text-[12px] text-[var(--muted)]">
-          Your location stays on your device — it&apos;s only used to sort stations by distance.
         </p>
       )}
     </div>
@@ -442,7 +424,7 @@ function SheetHandle({ size, onResize }: { size: SheetSize; onResize: (s: SheetS
         startY.current = null;
         if (dy < -24) step(1);
         else if (dy > 24) step(-1);
-        else onResize(size === "full" ? "normal" : size === "min" ? "normal" : "full");
+        else step(size === "full" ? -1 : 1);
       }}
     >
       <span className="mx-auto block h-1.5 w-10 rounded-full bg-[var(--hairline)]" />
@@ -456,11 +438,11 @@ function NearestList({
   title: string; items: Ranked[]; favorites: Set<number>; size: SheetSize;
   onResize: (s: SheetSize) => void; onSelect: (id: number) => void;
 }) {
-  const shown = size === "full" ? items : size === "normal" ? items.slice(0, 3) : [];
+  const shown = size === "full" ? items : items.slice(0, size === "normal" ? 3 : 1);
   return (
     <div>
       <SheetHandle size={size} onResize={onResize} />
-      <div className={`flex items-baseline justify-between px-5 pt-1 ${size === "min" ? "pb-4" : "pb-2"}`}>
+      <div className="flex items-baseline justify-between px-5 pb-1 pt-0.5">
         <h2 className="text-[17px] font-semibold tracking-tight text-[var(--ink)]">{title}</h2>
         {items.length > 3 && (
           <button onClick={() => onResize(size === "full" ? "normal" : "full")} className="text-[13px] font-medium text-[var(--accent)]">
@@ -468,36 +450,12 @@ function NearestList({
           </button>
         )}
       </div>
-      {size !== "min" && (items.length === 0 ? (
+      {items.length === 0 ? (
         <p className="px-5 pb-5 text-[14px] text-[var(--muted)]">No stations match. Try a wider radius or a different search.</p>
       ) : (
         <ul className={`overflow-y-auto overscroll-contain px-2 pb-2 ${size === "full" ? "max-h-[62dvh]" : ""}`}>
           {shown.map((s, i) => (
             <li key={s.id}><StationRow s={s} index={i} favorite={favorites.has(s.id)} onSelect={onSelect} /></li>
-          ))}
-        </ul>
-      ))}
-    </div>
-  );
-}
-
-function FavoritesList({ items, onSelect, onClose }: { items: Ranked[]; onSelect: (id: number) => void; onClose: () => void }) {
-  return (
-    <div>
-      <div className="flex items-center justify-between px-5 pb-1 pt-4">
-        <h2 className="text-[17px] font-semibold tracking-tight text-[var(--ink)]">Favorites</h2>
-        <button onClick={onClose} aria-label="Close favorites" className="grid h-9 w-9 place-items-center rounded-full bg-[var(--press)] text-[var(--muted)]">
-          <CloseIcon />
-        </button>
-      </div>
-      {items.length === 0 ? (
-        <p className="px-5 pb-5 pt-1 text-[14px] leading-snug text-[var(--muted)]">
-          Tap a station, then the <span className="text-[#f5b301]">☆</span> to save it here. Favorites show as gold stars on the map.
-        </p>
-      ) : (
-        <ul className="max-h-[50dvh] overflow-y-auto overscroll-contain px-2 pb-2">
-          {items.map((s) => (
-            <li key={s.id}><StationRow s={s} favorite onSelect={onSelect} /></li>
           ))}
         </ul>
       )}
@@ -583,5 +541,13 @@ function Octanes({ octanes }: { octanes: number[] }) {
         </span>
       ))}
     </div>
+  );
+}
+
+function Badge({ n }: { n: number }) {
+  return (
+    <span className="absolute -right-0.5 -top-0.5 grid h-5 min-w-5 place-items-center rounded-full bg-[#f5b301] px-1 text-[11px] font-bold text-white ring-2 ring-[var(--surface)]">
+      {n}
+    </span>
   );
 }

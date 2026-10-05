@@ -7,7 +7,6 @@ import { ShareIcon } from "@/components/icons";
 const MODES: { id: Mode; label: string }[] = [
   { id: "system", label: "Auto" },
   { id: "light", label: "Light" },
-  { id: "dim", label: "Dim" },
   { id: "dark", label: "Dark" },
 ];
 
@@ -45,7 +44,7 @@ export default function SettingsPanel({
       </div>
 
       <div className={`mt-4 ${LABEL}`}>Appearance</div>
-      <div className="mt-2 grid grid-cols-4 gap-1 rounded-xl bg-[var(--press)] p-1">
+      <div className="mt-2 grid grid-cols-3 gap-1 rounded-xl bg-[var(--press)] p-1">
         {MODES.map((m) => (
           <button
             key={m.id}
@@ -57,7 +56,6 @@ export default function SettingsPanel({
           </button>
         ))}
       </div>
-      <p className="mt-1.5 text-[11px] leading-snug text-[var(--muted)]">Auto uses Dim when your phone is in dark mode.</p>
 
       {!installed && (
         <button

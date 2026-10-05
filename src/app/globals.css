@@ -17,10 +17,10 @@
   color-scheme: light;
 }
 
-/* Themes live on <html data-theme="light|dim|dark">, set from Settings before first paint.
-   Without it (no JS yet), follow the system and use Dim. The accent trio is set inline
+/* Themes live on <html data-theme="light|dark">, set from Settings before first paint.
+   Without it (no JS yet), follow the system. The accent trio is set inline
    from the chosen color palette. */
-:root[data-theme="dim"] {
+:root[data-theme="dark"] {
   --bg: #2b303b;
   --ink: #f3f4f6;
   --muted: #a3aab6;
@@ -53,22 +53,6 @@
   --user-ring: #2b303b;
   color-scheme: dark;
   }
-}
-:root[data-theme="dark"] {
-  --bg: #191c24;
-  --ink: #f3f4f6;
-  --muted: #a3aab6;
-  --accent: #34c48b;
-  --accent-soft: rgba(52, 196, 139, 0.14);
-  --warn: #f59e0b;
-  --surface: rgba(31, 34, 43, 0.88);
-  --surface-strong: rgba(31, 34, 43, 0.94);
-  --ring: rgba(255, 255, 255, 0.09);
-  --hairline: rgba(255, 255, 255, 0.2);
-  --press: rgba(255, 255, 255, 0.07);
-  --on-accent: #08291c;
-  --user-ring: #191c24;
-  color-scheme: dark;
 }
 
 html, body {

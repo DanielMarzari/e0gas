@@ -69,7 +69,7 @@ function starIcon(ring: string): ImageData {
   ctx.stroke();
   ctx.beginPath();
   for (let i = 0; i < 10; i++) {
-    const r = i % 2 ? 7.5 : 17;
+    const r = i % 2 ? 8.5 : 19;
     const a = -Math.PI / 2 + (i * Math.PI) / 5;
     ctx.lineTo(size / 2 + r * Math.cos(a), size / 2 + 1 + r * Math.sin(a));
   }
@@ -182,14 +182,15 @@ function installStationLayers(map: maplibregl.Map, shade: Shade, accent: string)
     source: "favorites",
     layout: {
       "icon-image": "e0-star",
-      "icon-size": ["interpolate", ["linear"], ["zoom"], 5, 0.75, 12, 1],
+      // Same footprint as a station dot (incl. its ring): ~14px at zoom 8, ~20px at 14.
+      "icon-size": ["interpolate", ["linear"], ["zoom"], 5, 0.42, 8, 0.5, 14, 0.72],
       "icon-allow-overlap": true,
       // Placed first (top layer), so other station names make room for the star.
       "icon-ignore-placement": false,
       "text-field": ["step", ["zoom"], "", 8.5, ["get", "name"]],
       "text-font": ["Noto Sans Regular"],
       "text-size": ["interpolate", ["linear"], ["zoom"], 8.5, 10, 14, 12],
-      "text-offset": [0, 1.4],
+      "text-offset": [0, 1.2],
       "text-anchor": "top",
       "text-optional": true,
     },

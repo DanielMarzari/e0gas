@@ -1,11 +1,18 @@
 import { type Station, milesBetween } from "@/lib/stations";
 
 export type Radius = { kind: "mi" | "min"; value: number };
-export type Filter = { query: string; radius: Radius | null };
-export const NO_FILTER: Filter = { query: "", radius: null };
+export type Filter = {
+  query: string;
+  radius: Radius | null;
+  /** Sells at least this octane. */
+  minOctane: number | null;
+  favoritesOnly: boolean;
+};
+export const NO_FILTER: Filter = { query: "", radius: null, minOctane: null, favoritesOnly: false };
 
-export const MILE_OPTIONS = [5, 10, 25, 50];
-export const MINUTE_OPTIONS = [10, 20, 30, 45];
+export const MAX_MILES = 50;
+export const MAX_MINUTES = 120;
+export const OCTANE_STEPS = [87, 88, 89, 90, 91, 92, 93];
 
 /**
  * Rough drive-time → straight-line radius: ~40 mph on real roads, which wander
@@ -14,7 +21,8 @@ export const MINUTE_OPTIONS = [10, 20, 30, 45];
 const MILES_PER_MINUTE = 0.5;
 
 export const radiusMiles = (r: Radius) => (r.kind === "mi" ? r.value : r.value * MILES_PER_MINUTE);
-export const radiusLabel = (r: Radius) => (r.kind === "mi" ? `${r.value} mi` : `~${r.value} min`);
+export const minutesLabel = (m: number) => (m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}`);
+export const radiusLabel = (r: Radius) => (r.kind === "mi" ? `${r.value} mi` : `~${minutesLabel(r.value)}`);
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
@@ -34,15 +42,23 @@ export function matchesQuery(s: Station, query: string): boolean {
   return norm(s.brand).includes(nq) || norm(s.name).includes(nq) || norm(s.city).includes(nq);
 }
 
-export function applyFilter(stations: Station[], f: Filter, center: { lat: number; lng: number } | null): Station[] {
-  if (!f.query.trim() && !f.radius) return stations;
+export function applyFilter(
+  stations: Station[], f: Filter, center: { lat: number; lng: number } | null, favorites: Set<number>,
+): Station[] {
+  if (!isActive(f)) return stations;
   const maxMi = f.radius && center ? radiusMiles(f.radius) : Infinity;
   return stations.filter(
-    (s) => matchesQuery(s, f.query) && (maxMi === Infinity || milesBetween(center!.lat, center!.lng, s.lat, s.lng) <= maxMi),
+    (s) =>
+      (!f.favoritesOnly || favorites.has(s.id)) &&
+      (f.minOctane == null || s.octanes.some((o) => o >= f.minOctane!)) &&
+      matchesQuery(s, f.query) &&
+      (maxMi === Infinity || milesBetween(center!.lat, center!.lng, s.lat, s.lng) <= maxMi),
   );
 }
 
-export const isActive = (f: Filter) => !!f.query.trim() || !!f.radius;
+export const isActive = (f: Filter) => !!f.query.trim() || !!f.radius || f.minOctane != null || f.favoritesOnly;
+/** Filters other than the typed search. */
+export const filterCount = (f: Filter) => +!!f.radius + +(f.minOctane != null) + +f.favoritesOnly;
 
 /** A circle polygon for drawing the radius on the map. */
 export function circle(center: { lat: number; lng: number }, miles: number, steps = 64): GeoJSON.Feature<GeoJSON.Polygon> {

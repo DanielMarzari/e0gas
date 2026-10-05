@@ -11,22 +11,17 @@ export const START_BOUNDS: [[number, number], [number, number]] = [[-75.80, 40.4
 /** Non-accent station colors; the accent comes from the chosen theme palette. */
 export const STATION_COLORS = {
   light: { stroke: "#ffffff", selected: "#111827", label: "#1f2937", halo: "#ffffff", count: "#ffffff" },
-  dim: { stroke: "#2b303b", selected: "#f9fafb", label: "#e3e6ee", halo: "#2b303b", count: "#08130e" },
-  dark: { stroke: "#191c24", selected: "#f9fafb", label: "#d0d4e0", halo: "#191c24", count: "#08130e" },
+  dark: { stroke: "#2b303b", selected: "#f9fafb", label: "#e3e6ee", halo: "#2b303b", count: "#08130e" },
 } satisfies Record<Shade, unknown>;
 
-/** Basemap recolors for the two dark looks. Dim is a lighter slate with brighter roads. */
+/** Basemap recolors for dark mode: a soft slate with bright roads. */
 const DARK_MAP = {
-  dim: {
+  dark: {
     bg: "#2b303b", landcover: "#33423b", landuse: "#313e38", water: "#22374f", building: "#3b404b",
     highway: "#7a8398", highwayCasing: "#4c5263", road: "#5a6175", roadCasing: "#40454f",
     text: "#e3e6ee", boundary: "#8a92a0",
   },
-  dark: {
-    bg: "#191c24", landcover: "#1e2e28", landuse: "#1c2a24", water: "#14253a", building: "#252830",
-    highway: "#555e70", highwayCasing: "#3a3e4a", road: "#404558", roadCasing: "#2e3040",
-    text: "#d0d4e0", boundary: "#6b7280",
-  },
+
 };
 
 const HIGHWAY_LAYERS = [
@@ -62,7 +57,7 @@ function hideMinorBoundaries(map: maplibregl.Map, opacity: number) {
 
 export function applyRoamStyle(map: maplibregl.Map, shade: Shade) {
   hideMinorBoundaries(map, shade === "light" ? 0.5 : 0.7);
-  if (shade !== "light") return applyRoamDark(map, DARK_MAP[shade]);
+  if (shade !== "light") return applyRoamDark(map, DARK_MAP.dark);
   for (const id of HIGHWAY_LAYERS) paint(map, id, "line-color", id.includes("casing") ? "#a8a8a8" : "#b8b8b8");
   for (const id of MINOR_ROAD_LAYERS) paint(map, id, "line-color", id.includes("casing") ? "#dcdcdc" : "#e8e8e8");
   paint(map, "water", "fill-color", "#aad4e8");
