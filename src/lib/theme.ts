@@ -1,12 +1,12 @@
-export type Mode = "system" | "light" | "dim" | "dark";
-/** What's actually shown. "dim" is a softer slate dark; "dark" is near-black. */
-export type Shade = "light" | "dim" | "dark";
+export type Mode = "system" | "light" | "dark";
+/** What's actually shown. Dark is a soft slate, not near-black. */
+export type Shade = "light" | "dark";
 
-/** Auto follows the phone's setting, using the softer Dim look at night. */
+/** Auto follows the phone's light/dark setting. */
 export const resolveShade = (mode: Mode, systemDark: boolean): Shade =>
-  mode === "system" ? (systemDark ? "dim" : "light") : mode;
+  mode === "system" ? (systemDark ? "dark" : "light") : mode;
 
-export const BG = { light: "#eef0ec", dim: "#2b303b", dark: "#191c24" } as const;
+export const BG = { light: "#eef0ec", dark: "#2b303b" } as const;
 
 type Swatch = { accent: string; soft: string; on: string };
 export type Palette = { name: string; light: Swatch; dark: Swatch };
@@ -55,7 +55,8 @@ export function loadSettings(): Settings {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? "null");
     return {
       palette: raw?.palette in PALETTES ? raw.palette : fallback.palette,
-      mode: ["system", "light", "dim", "dark"].includes(raw?.mode) ? raw.mode : fallback.mode,
+      // "dim" was the old name for today's Dark.
+      mode: raw?.mode === "dim" ? "dark" : ["system", "light", "dark"].includes(raw?.mode) ? raw.mode : fallback.mode,
     };
   } catch {
     return fallback;
@@ -86,7 +87,7 @@ export function applyTheme(palette: string, shade: Shade) {
  */
 export const THEME_BOOT_SCRIPT = `try{var s=JSON.parse(localStorage.getItem(${JSON.stringify(KEY)})||"null")||{};var P=${JSON.stringify(
   Object.fromEntries(Object.entries(PALETTES).map(([k, p]) => [k, [p.light, p.dark]])),
-)};var m=s.mode;var t=m==="light"||m==="dim"||m==="dark"?m:(matchMedia("(prefers-color-scheme: dark)").matches?"dim":"light");var p=P[s.palette]||P[${JSON.stringify(DEFAULT_PALETTE)}];var w=p[t==="light"?0:1];var r=document.documentElement;r.dataset.theme=t;r.style.setProperty("--accent",w.accent);r.style.setProperty("--accent-soft",w.soft);r.style.setProperty("--on-accent",w.on)}catch(e){}`;
+)};var m=s.mode;var t=m==="light"?"light":m==="dim"||m==="dark"?"dark":(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");var p=P[s.palette]||P[${JSON.stringify(DEFAULT_PALETTE)}];var w=p[t==="light"?0:1];var r=document.documentElement;r.dataset.theme=t;r.style.setProperty("--accent",w.accent);r.style.setProperty("--accent-soft",w.soft);r.style.setProperty("--on-accent",w.on)}catch(e){}`;
 
 export function paletteSwatch(palette: string, shade: Shade): Swatch {
   return (PALETTES[palette] ?? PALETTES[DEFAULT_PALETTE])[shade === "light" ? "light" : "dark"];

@@ -1,80 +1,116 @@
 "use client";
 
-import { type Filter, type Radius, MILE_OPTIONS, MINUTE_OPTIONS, radiusMiles } from "@/lib/filters";
+import { useState } from "react";
+import {
+  type Filter, type Radius, MAX_MILES, MAX_MINUTES, OCTANE_STEPS, minutesLabel, radiusMiles,
+} from "@/lib/filters";
+import { StarIcon } from "@/components/icons";
 
 const LABEL = "text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]";
-const OCTANES = ["87", "88", "89", "90", "91", "93", "91+"];
+const SLIDER = "mt-2 w-full accent-[var(--accent)] h-6";
 
-function Chip({ on, onClick, children }: { on: boolean; onClick: () => void; children: React.ReactNode }) {
+function Row({ label, value, children }: { label: string; value: string; children: React.ReactNode }) {
   return (
-    <button
-      onClick={onClick}
-      aria-pressed={on}
-      className={`rounded-full px-3 py-1.5 text-[13px] font-medium transition active:scale-95 ${on ? "bg-[var(--accent)] text-[var(--on-accent)]" : "bg-[var(--press)] text-[var(--ink)] ring-1 ring-[var(--ring)]"}`}
-    >
+    <div className="mt-4">
+      <div className="flex items-baseline justify-between">
+        <span className={LABEL}>{label}</span>
+        <span className="text-[14px] font-semibold tabular-nums text-[var(--ink)]">{value}</span>
+      </div>
       {children}
-    </button>
+    </div>
   );
 }
 
 export default function FilterPanel({
-  filter, brands, hasLocation, matches, onChange, onDone,
+  filter, hasLocation, favoriteCount, matches, onChange, onDone,
 }: {
   filter: Filter;
-  /** Common brands near the map center, for one-tap search. */
-  brands: string[];
   hasLocation: boolean;
+  favoriteCount: number;
   matches: number;
   onChange: (f: Filter) => void;
   onDone: () => void;
 }) {
-  const setQuery = (query: string) => onChange({ ...filter, query });
-  const toggleQuery = (q: string) => setQuery(filter.query.toLowerCase() === q.toLowerCase() ? "" : q);
-  const setRadius = (r: Radius | null) => onChange({ ...filter, radius: r });
-  const radiusIs = (kind: Radius["kind"], value: number) => filter.radius?.kind === kind && filter.radius.value === value;
+  const set = (patch: Partial<Filter>) => onChange({ ...filter, ...patch });
+  // Unit for the distance slider; remembered even while no distance is set.
+  const [kind, setKindState] = useState<Radius["kind"]>(filter.radius?.kind ?? "mi");
+  const max = kind === "mi" ? MAX_MILES : MAX_MINUTES;
+  const step = kind === "mi" ? 1 : 5;
+  const radiusValue = filter.radius?.value ?? 0;
+  const octIdx = filter.minOctane == null ? 0 : OCTANE_STEPS.indexOf(filter.minOctane) + 1;
+
+  const setKind = (k: Radius["kind"]) => {
+    setKindState(k);
+    if (!filter.radius || filter.radius.kind === k) return;
+    // Keep roughly the same circle when switching units (drive time ≈ 0.5 mi per minute).
+    const mi = radiusMiles(filter.radius);
+    const v = k === "min" ? Math.min(MAX_MINUTES, Math.max(5, Math.round(mi / 0.5 / 5) * 5)) : Math.min(MAX_MILES, Math.max(1, Math.round(mi)));
+    set({ radius: { kind: k, value: v } });
+  };
 
   return (
     <div className="rounded-3xl bg-[var(--surface-strong)] p-4 shadow-[0_10px_40px_-12px_rgba(15,23,42,0.35)] ring-1 ring-[var(--ring)] backdrop-blur-xl">
-      {brands.length > 0 && (
-        <>
-          <div className={LABEL}>Brand</div>
-          <div className="mt-1.5 flex flex-wrap gap-1.5">
-            {brands.map((b) => (
-              <Chip key={b} on={filter.query.toLowerCase() === b.toLowerCase()} onClick={() => toggleQuery(b)}>{b}</Chip>
-            ))}
-          </div>
-        </>
-      )}
+      <button
+        onClick={() => set({ favoritesOnly: !filter.favoritesOnly })}
+        aria-pressed={filter.favoritesOnly}
+        className="flex w-full items-center gap-3 rounded-2xl bg-[var(--press)] px-3 py-2.5 text-left ring-1 ring-[var(--ring)]"
+      >
+        <span className="grid h-8 w-8 place-items-center rounded-full bg-[#f5b301] text-white"><StarIcon size={16} filled /></span>
+        <span className="flex-1">
+          <span className="block text-[15px] font-medium text-[var(--ink)]">Favorites only</span>
+          <span className="block text-[12px] text-[var(--muted)]">
+            {favoriteCount ? `${favoriteCount} saved` : "Tap ☆ on a station to save it"}
+          </span>
+        </span>
+        <span className={`relative h-6 w-10 rounded-full transition ${filter.favoritesOnly ? "bg-[var(--accent)]" : "bg-[var(--hairline)]"}`}>
+          <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${filter.favoritesOnly ? "left-[18px]" : "left-0.5"}`} />
+        </span>
+      </button>
 
-      <div className={`${brands.length ? "mt-3" : ""} ${LABEL}`}>Octane</div>
-      <div className="mt-1.5 flex flex-wrap gap-1.5">
-        {OCTANES.map((o) => (
-          <Chip key={o} on={filter.query === o} onClick={() => toggleQuery(o)}>{o}</Chip>
-        ))}
-      </div>
+      <Row label="Minimum octane" value={filter.minOctane == null ? "Any" : `${filter.minOctane}+`}>
+        <input
+          type="range" min={0} max={OCTANE_STEPS.length} step={1} value={octIdx}
+          onChange={(e) => { const i = +e.target.value; set({ minOctane: i === 0 ? null : OCTANE_STEPS[i - 1] }); }}
+          aria-label="Minimum octane"
+          className={SLIDER}
+        />
+      </Row>
 
-      <div className={`mt-3 ${LABEL}`}>Within</div>
-      <div className="mt-1.5 flex flex-wrap gap-1.5">
-        <Chip on={!filter.radius} onClick={() => setRadius(null)}>Any</Chip>
-        {MILE_OPTIONS.map((v) => (
-          <Chip key={v} on={radiusIs("mi", v)} onClick={() => setRadius({ kind: "mi", value: v })}>{v} mi</Chip>
-        ))}
+      <div className="mt-4 flex items-center justify-between">
+        <span className={LABEL}>Within</span>
+        <div className="grid grid-cols-2 gap-0.5 rounded-lg bg-[var(--press)] p-0.5 text-[12px] font-medium">
+          {(["mi", "min"] as const).map((k) => (
+            <button
+              key={k}
+              onClick={() => setKind(k)}
+              aria-pressed={kind === k}
+              className={`rounded-md px-2.5 py-1 ${kind === k ? "bg-[var(--accent)] text-[var(--on-accent)]" : "text-[var(--ink)]"}`}
+            >
+              {k === "mi" ? "Miles" : "Drive time"}
+            </button>
+          ))}
+        </div>
       </div>
-      <div className={`mt-3 ${LABEL}`}>Drive time (approx)</div>
-      <div className="mt-1.5 flex flex-wrap gap-1.5">
-        {MINUTE_OPTIONS.map((v) => (
-          <Chip key={v} on={radiusIs("min", v)} onClick={() => setRadius({ kind: "min", value: v })}>{v} min</Chip>
-        ))}
+      <div className="mt-1 flex items-baseline justify-end">
+        <span className="text-[14px] font-semibold tabular-nums text-[var(--ink)]">
+          {!filter.radius ? "Any distance" : kind === "mi" ? `${radiusValue} mi` : `~${minutesLabel(radiusValue)}`}
+        </span>
       </div>
-      <p className="mt-2 text-[11px] leading-snug text-[var(--muted)]">
+      <input
+        type="range" min={0} max={max} step={step} value={radiusValue}
+        onChange={(e) => { const v = +e.target.value; set({ radius: v ? { kind, value: v } : null }); }}
+        aria-label="Distance"
+        className={SLIDER}
+      />
+      <p className="mt-1 text-[11px] leading-snug text-[var(--muted)]">
         {filter.radius
-          ? `Circle of ${radiusMiles(filter.radius)} mi around ${hasLocation ? "you" : "the map center"}${filter.radius.kind === "min" ? " — drive time is a rough guess (~30 mph as the crow flies)" : ""}.`
-          : `Measured from ${hasLocation ? "your location" : "the map center"}.`}
+          ? `${radiusMiles(filter.radius)} mi circle around ${hasLocation ? "you" : "the map center"}${kind === "min" ? " — drive time is a rough guess" : ""}.`
+          : `Slide to limit by distance from ${hasLocation ? "you" : "the map center"}.`}
       </p>
 
       <div className="mt-3 flex items-center gap-2">
         <button
-          onClick={() => onChange({ query: "", radius: null })}
+          onClick={() => onChange({ ...filter, radius: null, minOctane: null, favoritesOnly: false })}
           className="h-11 rounded-xl px-4 text-[14px] font-medium text-[var(--muted)]"
         >
           Reset
