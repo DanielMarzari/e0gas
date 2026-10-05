@@ -15,7 +15,8 @@ export type MapApi = {
   /** Map coordinate under a screen point (CSS px from the top-left of the map). */
   latLngAt: (x: number, y: number) => LatLng;
   center: () => LatLng;
-  flyTo: (p: LatLng, zoom?: number) => void;
+  /** Move so p sits at screen height y (default: the middle). */
+  flyTo: (p: LatLng, zoom?: number, y?: number) => void;
 };
 
 type Props = {
@@ -93,8 +94,9 @@ function installStationLayers(map: maplibregl.Map, shade: Shade, accent: string)
   for (const id of ["favorites", "selected", "radius"]) {
     if (!map.getSource(id)) map.addSource(id, { type: "geojson", data: EMPTY });
   }
-  if (map.hasImage("star")) map.removeImage("star");
-  map.addImage("star", starIcon(c.stroke), { pixelRatio: 2 });
+  // Own name so it can't collide with an icon in the basemap's sprite.
+  if (map.hasImage("e0-star")) map.removeImage("e0-star");
+  map.addImage("e0-star", starIcon(c.stroke), { pixelRatio: 2 });
 
   map.addLayer({
     id: "radius-fill",
@@ -179,11 +181,19 @@ function installStationLayers(map: maplibregl.Map, shade: Shade, accent: string)
     type: "symbol",
     source: "favorites",
     layout: {
-      "icon-image": "star",
+      "icon-image": "e0-star",
       "icon-size": ["interpolate", ["linear"], ["zoom"], 5, 0.75, 12, 1],
       "icon-allow-overlap": true,
-      "icon-ignore-placement": true,
+      // Placed first (top layer), so other station names make room for the star.
+      "icon-ignore-placement": false,
+      "text-field": ["step", ["zoom"], "", 8.5, ["get", "name"]],
+      "text-font": ["Noto Sans Regular"],
+      "text-size": ["interpolate", ["linear"], ["zoom"], 8.5, 10, 14, 12],
+      "text-offset": [0, 1.4],
+      "text-anchor": "top",
+      "text-optional": true,
     },
+    paint: { "text-color": c.label, "text-halo-color": c.halo, "text-halo-width": 1.5 },
   });
 }
 
@@ -270,7 +280,11 @@ export default function StationMap({
         const p = map.getCenter();
         return { lat: p.lat, lng: p.lng };
       },
-      flyTo: (p, zoom) => map.easeTo({ center: [p.lng, p.lat], zoom: zoom ?? Math.max(map.getZoom(), 13) }),
+      flyTo: (p, zoom, y) => map.easeTo({
+        center: [p.lng, p.lat],
+        zoom: zoom ?? Math.max(map.getZoom(), 13),
+        offset: [0, y == null ? 0 : y - map.getContainer().clientHeight / 2],
+      }),
     };
     if (process.env.NODE_ENV !== "production") (window as unknown as { __map: maplibregl.Map }).__map = map;
     return () => {

@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { type Mode, type Settings, type Shade, PALETTES, paletteSwatch } from "@/lib/theme";
 import { useInstall } from "@/lib/install";
 import { ShareIcon } from "@/components/icons";
@@ -15,10 +14,14 @@ const MODES: { id: Mode; label: string }[] = [
 const LABEL = "text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]";
 
 export default function SettingsPanel({
-  settings, shade, updated, onChange,
-}: { settings: Settings; shade: Shade; updated: string; onChange: (p: Partial<Settings>) => void }) {
-  const { state, install } = useInstall();
-  const [howTo, setHowTo] = useState(false);
+  settings, shade, updated, onChange, onShowInstallSteps,
+}: {
+  settings: Settings; shade: Shade; updated: string;
+  onChange: (p: Partial<Settings>) => void;
+  /** No install prompt available: show step-by-step instructions instead. */
+  onShowInstallSteps: () => void;
+}) {
+  const { installed, install } = useInstall();
   const link = "underline decoration-[var(--hairline)] underline-offset-2";
 
   return (
@@ -56,24 +59,13 @@ export default function SettingsPanel({
       </div>
       <p className="mt-1.5 text-[11px] leading-snug text-[var(--muted)]">Auto uses Dim when your phone is in dark mode.</p>
 
-      {state !== "installed" && (
-        <>
-          <button
-            onClick={() => (state === "prompt" ? install() : setHowTo((h) => !h))}
-            className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--accent-soft)] py-2.5 text-[14px] font-semibold text-[var(--accent)] active:scale-[0.98]"
-          >
-            <ShareIcon /> Add to Home Screen
-          </button>
-          {howTo && (
-            <p className="mt-2 text-[12px] leading-snug text-[var(--ink)]">
-              {state === "ios" ? (
-                <>In Safari, tap <b>Share</b> <span aria-hidden>⎋</span> at the bottom, then <b>Add to Home Screen</b>.</>
-              ) : (
-                <>Open your browser&apos;s menu (⋮) and choose <b>Install app</b> or <b>Add to Home screen</b>.</>
-              )}
-            </p>
-          )}
-        </>
+      {!installed && (
+        <button
+          onClick={async () => { if (!(await install())) onShowInstallSteps(); }}
+          className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--accent-soft)] py-2.5 text-[14px] font-semibold text-[var(--accent)] active:scale-[0.98]"
+        >
+          <ShareIcon /> Add to Home Screen
+        </button>
       )}
 
       <div className={`mt-4 ${LABEL}`}>About</div>

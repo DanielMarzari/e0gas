@@ -10,13 +10,29 @@ const INPUT =
 
 /** Sheet content while placing a new station: the map pin marks where it goes. */
 export default function AddStationForm({
-  onSave, onCancel,
-}: { onSave: (s: NewStation) => void; onCancel: () => void }) {
+  onSave, onCancel, onFindAddress,
+}: {
+  onSave: (s: NewStation) => void;
+  onCancel: () => void;
+  /** Look up the address and move the pin there; resolves false if not found. */
+  onFindAddress: (address: string) => Promise<boolean>;
+}) {
   const [name, setName] = useState("");
   const [brand, setBrand] = useState("");
   const [street, setStreet] = useState("");
   const [city, setCity] = useState("");
   const [octanes, setOctanes] = useState<number[]>([90]);
+  const [finding, setFinding] = useState<"idle" | "busy" | "missing" | "found">("idle");
+  const address = [street, city].map((x) => x.trim()).filter(Boolean).join(", ");
+  const find = async () => {
+    if (!address) return;
+    setFinding("busy");
+    try {
+      setFinding((await onFindAddress(address)) ? "found" : "missing");
+    } catch {
+      setFinding("missing");
+    }
+  };
   const toggle = (o: number) => setOctanes((os) => (os.includes(o) ? os.filter((x) => x !== o) : [...os, o].sort()));
 
   return (
@@ -32,15 +48,37 @@ export default function AddStationForm({
         <button type="button" onClick={onCancel} className="text-[14px] font-medium text-[var(--muted)]">Cancel</button>
       </div>
       <p className="mt-1 text-[13px] leading-snug text-[var(--muted)]">
-        Drag the map so the pin sits on the station. Saved on this device only.
+        Type the address and tap Find, or drag the map so the pin sits on the station. Saved on this device only.
       </p>
       <div className="mt-3 space-y-2">
         <input className={INPUT} value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (e.g. Rutter's Palmer)" required />
         <div className="flex gap-2">
           <input className={INPUT} value={brand} onChange={(e) => setBrand(e.target.value)} placeholder="Brand (optional)" />
-          <input className={INPUT} value={city} onChange={(e) => setCity(e.target.value)} placeholder="Town (optional)" />
+          <input className={INPUT} value={city} onChange={(e) => { setCity(e.target.value); setFinding("idle"); }} placeholder="Town" />
         </div>
-        <input className={INPUT} value={street} onChange={(e) => setStreet(e.target.value)} placeholder="Street address (optional)" />
+        <div className="flex gap-2">
+          <input
+            className={INPUT}
+            value={street}
+            onChange={(e) => { setStreet(e.target.value); setFinding("idle"); }}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); find(); } }}
+            placeholder="Street address"
+          />
+          <button
+            type="button"
+            onClick={find}
+            disabled={!address || finding === "busy"}
+            className="h-11 shrink-0 rounded-xl bg-[var(--accent-soft)] px-4 text-[14px] font-semibold text-[var(--accent)] disabled:opacity-50"
+          >
+            {finding === "busy" ? "…" : "Find"}
+          </button>
+        </div>
+        {finding === "missing" && (
+          <p className="text-[12px] text-[var(--warn)]">Couldn&apos;t find that address — add the town, or drag the map instead.</p>
+        )}
+        {finding === "found" && (
+          <p className="text-[12px] text-[var(--muted)]">Pin moved. Nudge the map if it&apos;s not quite on the pumps.</p>
+        )}
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
         <span className="mr-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">Octane</span>

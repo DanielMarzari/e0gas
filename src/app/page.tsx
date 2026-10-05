@@ -12,15 +12,20 @@ import {
 import { type Filter, NO_FILTER, applyFilter, isActive, radiusMiles, radiusLabel } from "@/lib/filters";
 import { useCustomStations, useFavorites } from "@/lib/storage";
 import SettingsPanel from "@/components/SettingsPanel";
-import SearchPanel from "@/components/SearchPanel";
+import FilterPanel from "@/components/FilterPanel";
+import InstallSheet from "@/components/InstallSheet";
+import { useInstall } from "@/lib/install";
+import { geocode } from "@/lib/geocode";
 import AddStationForm, { type NewStation } from "@/components/AddStationForm";
-import { CloseIcon, GearIcon, LocateIcon, PinIcon, PlusIcon, SearchIcon, StarIcon } from "@/components/icons";
+import { CloseIcon, FilterIcon, GearIcon, LocateIcon, PinIcon, PlusIcon, SearchIcon, StarIcon } from "@/components/icons";
 
 const StationMap = dynamic(() => import("@/components/StationMap"), { ssr: false });
 
 type LocState = "idle" | "locating" | "denied" | "error" | "ok";
 type Ranked = Station & { miles: number };
-type Panel = "settings" | "search" | null;
+type Panel = "settings" | "filter" | null;
+/** Bottom-sheet list size, changed by dragging or tapping its handle. */
+type SheetSize = "min" | "normal" | "full";
 
 const LIST_SIZE = 25;
 /** Where the placement pin sits while adding a station (fraction of screen height). */
@@ -44,7 +49,9 @@ export default function Home() {
   const [user, setUser] = useState<LatLng | null>(null);
   const [loc, setLoc] = useState<LocState>("idle");
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [expanded, setExpanded] = useState(false);
+  const [sheetSize, setSheetSize] = useState<SheetSize>("normal");
+  const [showInstall, setShowInstall] = useState(false);
+  const { platform: installPlatform } = useInstall();
   const [panel, setPanel] = useState<Panel>(null);
   const [showFavorites, setShowFavorites] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -89,6 +96,8 @@ export default function Home() {
   const origin = user ?? searchCenter;
   const filtering = isActive(filter);
   const visible = useMemo(() => applyFilter(all, filter, origin), [all, filter, origin]);
+  // Favorites draw as stars on their own layer; leave them out of the plain dots.
+  const mapStations = useMemo(() => visible.filter((s) => !favSet.has(s.id)), [visible, favSet]);
 
   const rank = (list: Station[]): Ranked[] =>
     origin
@@ -107,7 +116,7 @@ export default function Home() {
 
   /** Most common brands within ~30 mi of where you're looking, for search chips. */
   const nearbyBrands = useMemo(() => {
-    if (panel !== "search" || !origin) return [];
+    if (panel !== "filter" || !origin) return [];
     const counts = new Map<string, number>();
     for (const s of all) {
       if (!s.brand || s.brand === "NONE" || milesBetween(origin.lat, origin.lng, s.lat, s.lng) > 30) continue;
@@ -132,15 +141,19 @@ export default function Home() {
     );
   };
 
+  /** Without a location, searches measure from wherever the map is looking. */
+  const pinSearchCenter = () => {
+    if (!user && mapApi.current) setSearchCenter(mapApi.current.center());
+  };
   const togglePanel = (p: Panel) => {
-    if (p === "search" && panel !== "search" && !user && mapApi.current) setSearchCenter(mapApi.current.center());
+    if (p === "filter" && panel !== "filter") pinSearchCenter();
     setPanel((cur) => (cur === p ? null : p));
   };
 
   const select = (id: number | null) => {
     setSelectedId(id);
     if (id != null) {
-      setExpanded(false);
+      setSheetSize("normal");
       setPanel(null);
     }
   };
@@ -149,13 +162,22 @@ export default function Home() {
     setFavoriteIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
 
   const startAdding = () => {
+    if (adding) return;
     setPanel(null);
     setSelectedId(null);
     setShowFavorites(false);
     setFilter(NO_FILTER); // so the new station isn't hidden by an old search
     setAdding(true);
+    // Zoom in on whatever is already under the pin (or on you), keeping it under the pin.
     const api = mapApi.current;
-    if (api) api.flyTo(user ?? api.latLngAt(innerWidth / 2, innerHeight * PIN_Y), 15);
+    if (api) api.flyTo(user ?? api.latLngAt(innerWidth / 2, innerHeight * PIN_Y), 15, innerHeight * PIN_Y);
+  };
+
+  const findAddress = async (address: string) => {
+    const api = mapApi.current;
+    const hit = await geocode(address, user ?? api?.center());
+    if (hit && api) api.flyTo(hit, 17, innerHeight * PIN_Y);
+    return !!hit;
   };
 
   const saveStation = (n: NewStation) => {
@@ -178,12 +200,11 @@ export default function Home() {
   };
 
   const selectedMiles = selected && origin ? milesBetween(origin.lat, origin.lng, selected.lat, selected.lng) : null;
-  const filterSummary = [filter.query.trim(), filter.radius && radiusLabel(filter.radius)].filter(Boolean).join(" · ");
 
   return (
     <div className="fixed inset-0 overflow-hidden bg-[var(--bg)]">
       <StationMap
-        stations={visible}
+        stations={mapStations}
         favorites={favorites}
         user={user}
         focus={nearest}
@@ -204,38 +225,49 @@ export default function Home() {
       {/* Tap outside an open panel to close it */}
       {panel && <div className="absolute inset-0 z-10" onClick={() => setPanel(null)} aria-hidden />}
 
-      {/* ── Top bar: favorites · search · settings ── */}
+      {/* ── Top bar: search (with filters) · settings, favorites, add, locate ── */}
       <div className="absolute inset-x-0 top-0 z-20 flex items-start gap-2.5 px-4 pt-[max(14px,env(safe-area-inset-top))]">
-        <button
-          onClick={() => { setShowFavorites((v) => !v); setSelectedId(null); setPanel(null); setAdding(false); }}
-          aria-label="Favorites"
-          aria-pressed={showFavorites}
-          className={`${FLOAT_BUTTON} ${showFavorites ? "!bg-[var(--accent)] !text-[var(--on-accent)]" : ""}`}
-        >
-          <StarIcon filled={showFavorites || favorites.length > 0} />
-        </button>
-
         <div className="min-w-0 flex-1">
-          <div className="mx-auto flex h-12 max-w-md items-center rounded-full bg-[var(--surface)] shadow-[0_6px_24px_-8px_rgba(15,23,42,0.25)] ring-1 ring-[var(--ring)] backdrop-blur-md">
-            <button
-              onClick={() => togglePanel("search")}
-              aria-expanded={panel === "search"}
-              className="flex h-full min-w-0 flex-1 items-center gap-2 pl-4 pr-2 text-left"
-            >
-              <span className="text-[var(--accent)]"><SearchIcon size={18} /></span>
-              <span className={`truncate text-[15px] ${filtering ? "font-medium text-[var(--ink)]" : "text-[var(--muted)]"}`}>
-                {filtering ? filterSummary : "Search"}
-              </span>
-            </button>
-            {filtering && (
-              <button onClick={() => setFilter(NO_FILTER)} aria-label="Clear search" className="grid h-full w-11 place-items-center text-[var(--muted)]">
+          <div className="flex h-12 items-center rounded-full bg-[var(--surface)] shadow-[0_6px_24px_-8px_rgba(15,23,42,0.25)] ring-1 ring-[var(--ring)] backdrop-blur-md focus-within:ring-[var(--accent)]">
+            <span className="pl-4 pr-2 text-[var(--accent)]"><SearchIcon size={18} /></span>
+            <input
+              value={filter.query}
+              onChange={(e) => {
+                if (!filter.query) pinSearchCenter();
+                setFilter({ ...filter, query: e.target.value });
+              }}
+              onFocus={() => setPanel(null)}
+              onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+              placeholder="Search brand, town, octane"
+              aria-label="Search stations"
+              enterKeyHint="search"
+              className="h-full min-w-0 flex-1 bg-transparent text-[16px] text-[var(--ink)] outline-none placeholder:text-[var(--muted)]"
+            />
+            {filter.query && (
+              <button onClick={() => setFilter({ ...filter, query: "" })} aria-label="Clear search" className="grid h-full w-9 place-items-center text-[var(--muted)]">
                 <CloseIcon />
               </button>
             )}
+            <button
+              onClick={() => togglePanel("filter")}
+              aria-label="Filters"
+              aria-expanded={panel === "filter"}
+              className={`relative mr-1 grid h-10 w-10 shrink-0 place-items-center rounded-full transition ${panel === "filter" || filter.radius ? "bg-[var(--accent)] text-[var(--on-accent)]" : "text-[var(--accent)]"}`}
+            >
+              <FilterIcon />
+            </button>
           </div>
-          {panel === "search" && (
-            <div className="mx-auto mt-2.5 max-w-md">
-              <SearchPanel
+          {filter.radius && panel !== "filter" && (
+            <button
+              onClick={() => setFilter({ ...filter, radius: null })}
+              className="ml-2 mt-2 inline-flex items-center gap-1.5 rounded-full bg-[var(--surface)] py-1 pl-3 pr-2 text-[13px] font-medium text-[var(--ink)] shadow-[0_4px_16px_-8px_rgba(15,23,42,0.3)] ring-1 ring-[var(--ring)] backdrop-blur-md"
+            >
+              Within {radiusLabel(filter.radius)} <span className="text-[var(--muted)]"><CloseIcon size={13} /></span>
+            </button>
+          )}
+          {panel === "filter" && (
+            <div className="mt-2.5">
+              <FilterPanel
                 filter={filter}
                 brands={nearbyBrands}
                 hasLocation={!!user}
@@ -253,11 +285,30 @@ export default function Home() {
           </button>
           {panel === "settings" ? (
             <div className="absolute right-0 top-[58px]">
-              <SettingsPanel settings={settings} shade={shade} updated={updated} onChange={updateSettings} />
+              <SettingsPanel
+                settings={settings}
+                shade={shade}
+                updated={updated}
+                onChange={updateSettings}
+                onShowInstallSteps={() => { setPanel(null); setShowInstall(true); }}
+              />
             </div>
-          ) : panel !== "search" && (
+          ) : panel !== "filter" && (
             <>
-              <button onClick={startAdding} aria-label="Add a station" className={FLOAT_BUTTON}>
+              <button
+                onClick={() => { setShowFavorites((v) => !v); setSelectedId(null); setAdding(false); }}
+                aria-label="Favorites"
+                aria-pressed={showFavorites}
+                className={`${FLOAT_BUTTON} ${showFavorites ? "!bg-[var(--accent)] !text-[var(--on-accent)]" : ""}`}
+              >
+                <StarIcon filled={showFavorites || favorites.length > 0} />
+              </button>
+              <button
+                onClick={startAdding}
+                aria-label="Add a station"
+                aria-pressed={adding}
+                className={`${FLOAT_BUTTON} ${adding ? "!bg-[var(--accent)] !text-[var(--on-accent)]" : ""}`}
+              >
                 <PlusIcon />
               </button>
               {user && (
@@ -273,8 +324,10 @@ export default function Home() {
       {/* ── Bottom sheet ── */}
       <section className="absolute inset-x-0 bottom-0 mx-auto max-w-xl px-3 pb-[max(12px,env(safe-area-inset-bottom))]">
         <div className="sheet overflow-hidden rounded-[28px] bg-[var(--surface-strong)] shadow-[0_-8px_40px_-12px_rgba(15,23,42,0.3)] ring-1 ring-[var(--ring)] backdrop-blur-xl">
-          {adding ? (
-            <AddStationForm onSave={saveStation} onCancel={() => setAdding(false)} />
+          {showInstall ? (
+            <InstallSheet platform={installPlatform} onClose={() => setShowInstall(false)} />
+          ) : adding ? (
+            <AddStationForm onSave={saveStation} onCancel={() => setAdding(false)} onFindAddress={findAddress} />
           ) : selected ? (
             <SelectedCard
               station={selected}
@@ -292,8 +345,8 @@ export default function Home() {
               title={filtering ? (user ? "Matches near you" : "Matches near map center") : "Nearest to you"}
               items={nearest}
               favorites={favSet}
-              expanded={expanded}
-              onToggle={() => setExpanded((e) => !e)}
+              size={sheetSize}
+              onResize={setSheetSize}
               onSelect={select}
             />
           ) : (
@@ -373,35 +426,57 @@ function StationRow({
   );
 }
 
+const SIZES: SheetSize[] = ["min", "normal", "full"];
+
+/** Drag (or tap) handle: drag up to grow the list, down to shrink it; tap cycles. */
+function SheetHandle({ size, onResize }: { size: SheetSize; onResize: (s: SheetSize) => void }) {
+  const startY = useRef<number | null>(null);
+  const step = (dir: 1 | -1) => onResize(SIZES[Math.min(2, Math.max(0, SIZES.indexOf(size) + dir))]);
+  return (
+    <button
+      className="block w-full touch-none pb-1 pt-2.5"
+      aria-label={size === "full" ? "Shrink list" : "Expand list"}
+      onPointerDown={(e) => { startY.current = e.clientY; e.currentTarget.setPointerCapture(e.pointerId); }}
+      onPointerUp={(e) => {
+        const dy = startY.current == null ? 0 : e.clientY - startY.current;
+        startY.current = null;
+        if (dy < -24) step(1);
+        else if (dy > 24) step(-1);
+        else onResize(size === "full" ? "normal" : size === "min" ? "normal" : "full");
+      }}
+    >
+      <span className="mx-auto block h-1.5 w-10 rounded-full bg-[var(--hairline)]" />
+    </button>
+  );
+}
+
 function NearestList({
-  title, items, favorites, expanded, onToggle, onSelect,
+  title, items, favorites, size, onResize, onSelect,
 }: {
-  title: string; items: Ranked[]; favorites: Set<number>; expanded: boolean;
-  onToggle: () => void; onSelect: (id: number) => void;
+  title: string; items: Ranked[]; favorites: Set<number>; size: SheetSize;
+  onResize: (s: SheetSize) => void; onSelect: (id: number) => void;
 }) {
-  const shown = expanded ? items : items.slice(0, 3);
+  const shown = size === "full" ? items : size === "normal" ? items.slice(0, 3) : [];
   return (
     <div>
-      <button onClick={onToggle} className="block w-full pt-2.5 pb-1" aria-label={expanded ? "Show fewer" : "Show more"}>
-        <span className="mx-auto block h-1.5 w-10 rounded-full bg-[var(--hairline)]" />
-      </button>
-      <div className="flex items-baseline justify-between px-5 pb-2 pt-1">
+      <SheetHandle size={size} onResize={onResize} />
+      <div className={`flex items-baseline justify-between px-5 pt-1 ${size === "min" ? "pb-4" : "pb-2"}`}>
         <h2 className="text-[17px] font-semibold tracking-tight text-[var(--ink)]">{title}</h2>
         {items.length > 3 && (
-          <button onClick={onToggle} className="text-[13px] font-medium text-[var(--accent)]">
-            {expanded ? "Less" : `Show ${items.length}`}
+          <button onClick={() => onResize(size === "full" ? "normal" : "full")} className="text-[13px] font-medium text-[var(--accent)]">
+            {size === "full" ? "Less" : `Show ${items.length}`}
           </button>
         )}
       </div>
-      {items.length === 0 ? (
+      {size !== "min" && (items.length === 0 ? (
         <p className="px-5 pb-5 text-[14px] text-[var(--muted)]">No stations match. Try a wider radius or a different search.</p>
       ) : (
-        <ul className={`overflow-y-auto overscroll-contain px-2 pb-2 ${expanded ? "max-h-[62dvh]" : ""}`}>
+        <ul className={`overflow-y-auto overscroll-contain px-2 pb-2 ${size === "full" ? "max-h-[62dvh]" : ""}`}>
           {shown.map((s, i) => (
             <li key={s.id}><StationRow s={s} index={i} favorite={favorites.has(s.id)} onSelect={onSelect} /></li>
           ))}
         </ul>
-      )}
+      ))}
     </div>
   );
 }
@@ -481,9 +556,7 @@ function SelectedCard({
           >
             Gas prices nearby on GasBuddy ↗
           </a>
-          <p className="mt-2 text-center text-[11px] leading-snug text-[var(--muted)]">
-            GasBuddy doesn&apos;t track ethanol-free prices specifically — its regular and premium prices are a rough guide.
-          </p>
+          <p className="mt-1.5 text-center text-[11px] text-[var(--muted)]">GasBuddy doesn&apos;t list ethanol-free prices.</p>
         </>
       )}
       {onRemove && (

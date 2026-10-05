@@ -49,7 +49,19 @@ function paint(map: maplibregl.Map, id: string, prop: string, value: unknown) {
   try { map.setPaintProperty(id, prop, value); } catch { /* layer lacks prop */ }
 }
 
+/**
+ * Keep country and state lines, drop counties and towns (OpenMapTiles admin_level 5+),
+ * whichever basemap layer draws them.
+ */
+function hideMinorBoundaries(map: maplibregl.Map, opacity: number) {
+  for (const layer of map.getStyle().layers ?? []) {
+    if (layer.type !== "line" || (layer as { "source-layer"?: string })["source-layer"] !== "boundary") continue;
+    paint(map, layer.id, "line-opacity", ["case", [">", ["to-number", ["get", "admin_level"], 2], 4], 0, opacity]);
+  }
+}
+
 export function applyRoamStyle(map: maplibregl.Map, shade: Shade) {
+  hideMinorBoundaries(map, shade === "light" ? 0.5 : 0.7);
   if (shade !== "light") return applyRoamDark(map, DARK_MAP[shade]);
   for (const id of HIGHWAY_LAYERS) paint(map, id, "line-color", id.includes("casing") ? "#a8a8a8" : "#b8b8b8");
   for (const id of MINOR_ROAD_LAYERS) paint(map, id, "line-color", id.includes("casing") ? "#dcdcdc" : "#e8e8e8");
@@ -59,10 +71,6 @@ export function applyRoamStyle(map: maplibregl.Map, shade: Shade) {
   paint(map, "park", "fill-opacity", 0.8);
   paint(map, "landcover_wood", "fill-color", "#a8d4a0");
   paint(map, "landuse_residential", "fill-color", "#f0eeec");
-  for (const id of ["boundary_country_z0-4", "boundary_country_z5-", "boundary_state"]) {
-    // keep borders, just quieter
-    paint(map, id, "line-opacity", 0.5);
-  }
 }
 
 /** ROAM's dark-mode contrast tweaks for the OpenFreeMap dark style. */
