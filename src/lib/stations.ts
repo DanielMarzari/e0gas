@@ -45,6 +45,36 @@ export function googleMapsUrl(s: Station): string {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
 }
 
+export type Platform = "ios" | "android" | "desktop";
+
+export function detectPlatform(): Platform {
+  const ua = navigator.userAgent;
+  if (/android/i.test(ua)) return "android";
+  // iPadOS reports itself as a Mac; touch support gives it away.
+  if (/iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) return "ios";
+  return "desktop";
+}
+
+/**
+ * Link props that open the Google Maps app when it's installed, else the website.
+ * - iOS: google.com/maps/search/* is a universal link claimed by the Google Maps app.
+ *   It must be a same-tab tap (target=_blank can skip the app hand-off); without
+ *   the app it simply loads the website.
+ * - Android: an intent:// URL targets the Maps app, with the website as fallback.
+ * - Desktop: website in a new tab.
+ */
+export function mapsLinkProps(s: Station, platform: Platform): { href: string; target?: string; rel?: string } {
+  const web = googleMapsUrl(s);
+  if (platform === "android") {
+    const path = web.replace(/^https:\/\//, "");
+    return {
+      href: `intent://${path}#Intent;scheme=https;package=com.google.android.apps.maps;S.browser_fallback_url=${encodeURIComponent(web)};end`,
+    };
+  }
+  if (platform === "ios") return { href: web };
+  return { href: web, target: "_blank", rel: "noopener" };
+}
+
 export function titleCase(s: string): string {
   if (s !== s.toUpperCase() && s !== s.toLowerCase()) return s;
   return s.toLowerCase().replace(/\b([a-z])/g, (c) => c.toUpperCase());

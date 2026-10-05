@@ -7,7 +7,32 @@
   --accent: #0f8a5f;
   --accent-soft: #e3f3ec;
   --warn: #b45309;
+  --surface: rgba(255, 255, 255, 0.9);
+  --surface-strong: rgba(255, 255, 255, 0.95);
+  --ring: rgba(0, 0, 0, 0.05);
+  --hairline: rgba(0, 0, 0, 0.15);
+  --press: rgba(0, 0, 0, 0.04);
+  --on-accent: #ffffff;
   color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191c24;
+    --ink: #f3f4f6;
+    --muted: #9aa1ad;
+    --accent: #34c48b;
+    --accent-soft: rgba(52, 196, 139, 0.14);
+    --warn: #f59e0b;
+    --surface: rgba(31, 34, 43, 0.88);
+    --surface-strong: rgba(31, 34, 43, 0.94);
+    --ring: rgba(255, 255, 255, 0.08);
+    --hairline: rgba(255, 255, 255, 0.18);
+    --press: rgba(255, 255, 255, 0.06);
+    --on-accent: #08291c;
+    color-scheme: dark;
+  }
+  .user-dot { border-color: #191c24; }
 }
 
 html, body {
