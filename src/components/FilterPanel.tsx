@@ -5,21 +5,9 @@ import {
   type Filter, type Radius, MAX_MILES, MAX_MINUTES, OCTANE_STEPS, minutesLabel, radiusMiles,
 } from "@/lib/filters";
 import { StarIcon } from "@/components/icons";
+import TickSlider from "@/components/TickSlider";
 
 const LABEL = "text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]";
-const SLIDER = "mt-2 w-full accent-[var(--accent)] h-6";
-
-function Row({ label, value, children }: { label: string; value: string; children: React.ReactNode }) {
-  return (
-    <div className="mt-4">
-      <div className="flex items-baseline justify-between">
-        <span className={LABEL}>{label}</span>
-        <span className="text-[14px] font-semibold tabular-nums text-[var(--ink)]">{value}</span>
-      </div>
-      {children}
-    </div>
-  );
-}
 
 export default function FilterPanel({
   filter, hasLocation, favoriteCount, matches, onChange, onDone,
@@ -67,14 +55,15 @@ export default function FilterPanel({
         </span>
       </button>
 
-      <Row label="Minimum octane" value={filter.minOctane == null ? "Any" : `${filter.minOctane}+`}>
-        <input
-          type="range" min={0} max={OCTANE_STEPS.length} step={1} value={octIdx}
-          onChange={(e) => { const i = +e.target.value; set({ minOctane: i === 0 ? null : OCTANE_STEPS[i - 1] }); }}
-          aria-label="Minimum octane"
-          className={SLIDER}
+      <div className={`mt-4 ${LABEL}`}>Minimum octane</div>
+      <div className="mt-1">
+        <TickSlider
+          label="Minimum octane"
+          min={0} max={OCTANE_STEPS.length} step={1} value={octIdx}
+          onChange={(i) => set({ minOctane: i === 0 ? null : OCTANE_STEPS[i - 1] })}
+          ticks={[{ value: 0, label: "Any" }, ...OCTANE_STEPS.map((o, i) => ({ value: i + 1, label: o >= 100 ? `${o}+` : `${o}` }))]}
         />
-      </Row>
+      </div>
 
       <div className="mt-4 flex items-center justify-between">
         <span className={LABEL}>Within</span>
@@ -91,17 +80,18 @@ export default function FilterPanel({
           ))}
         </div>
       </div>
-      <div className="mt-1 flex items-baseline justify-end">
-        <span className="text-[14px] font-semibold tabular-nums text-[var(--ink)]">
-          {!filter.radius ? "Any distance" : kind === "mi" ? `${radiusValue} mi` : `~${minutesLabel(radiusValue)}`}
-        </span>
+      {/* Gap keeps the value bubble well clear of the Miles / Drive time switch. */}
+      <div className="mt-3">
+        <TickSlider
+          label="Distance"
+          min={0} max={max} step={step} value={radiusValue}
+          onChange={(v) => set({ radius: v ? { kind, value: v } : null })}
+          bubble={filter.radius ? (kind === "mi" ? `${radiusValue} mi` : `~${minutesLabel(radiusValue)}`) : null}
+          ticks={kind === "mi"
+            ? [{ value: 0, label: "Any" }, { value: 10, label: "10" }, { value: 25, label: "25" }, { value: 50, label: "50 mi" }]
+            : [{ value: 0, label: "Any" }, { value: 30, label: "30m" }, { value: 60, label: "1h" }, { value: 120, label: "2h" }]}
+        />
       </div>
-      <input
-        type="range" min={0} max={max} step={step} value={radiusValue}
-        onChange={(e) => { const v = +e.target.value; set({ radius: v ? { kind, value: v } : null }); }}
-        aria-label="Distance"
-        className={SLIDER}
-      />
       <p className="mt-1 text-[11px] leading-snug text-[var(--muted)]">
         {filter.radius
           ? `${radiusMiles(filter.radius)} mi circle around ${hasLocation ? "you" : "the map center"}${kind === "min" ? " — drive time is a rough guess" : ""}.`

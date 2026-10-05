@@ -30,13 +30,15 @@ export default function AddStationForm({
   const [address, setAddress] = useState("");
   const [octanes, setOctanes] = useState<number[]>([90]);
   const [lookup, setLookup] = useState<Lookup>("idle");
+  /** Place the pin by typing an address, or at where you are now. */
+  const [mode, setMode] = useState<"address" | "here">("address");
   const place = useRef<Place | null>(null);
   const toggle = (o: number) => setOctanes((os) => (os.includes(o) ? os.filter((x) => x !== o) : [...os, o].sort()));
 
   // Look the address up on its own once typing pauses (needs a house number or a town to be worth it).
   useEffect(() => {
     const q = address.trim();
-    if (q.length < 6 || !/\d|,/.test(q)) return;
+    if (mode !== "address" || q.length < 6 || !/\d|,/.test(q)) return;
     let stale = false;
     const t = setTimeout(async () => {
       setLookup("busy");
@@ -52,7 +54,7 @@ export default function AddStationForm({
     return () => { stale = true; clearTimeout(t); };
     // onFindAddress is stable enough; re-running on every parent render would re-query.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [address]);
+  }, [address, mode]);
 
   return (
     <form
@@ -61,7 +63,7 @@ export default function AddStationForm({
         e.preventDefault();
         if (!name.trim()) return;
         // "123 Main St, Kutztown, PA" → street "123 Main St"; town/state from the lookup when we have one.
-        const parts = address.split(",").map((x) => x.trim()).filter(Boolean);
+        const parts = (mode === "address" ? address : "").split(",").map((x) => x.trim()).filter(Boolean);
         onSave({
           name: name.trim(),
           brand: brand.trim(),
@@ -77,34 +79,51 @@ export default function AddStationForm({
         <button type="button" onClick={onCancel} className="text-[14px] font-medium text-[var(--muted)]">Cancel</button>
       </div>
       <p className="mt-0.5 text-[13px] leading-snug text-[var(--muted)]">
-        Type the address, use your location, or drag the map under the pin. Saved on this device only.
+        Place the pin by address or at your location, then drag the map to fine-tune. Saved on this device only.
       </p>
 
       <div className="mt-3 space-y-2">
-        <div className="relative">
-          <input
-            className={`${INPUT} pr-10`}
-            value={address}
-            onChange={(e) => { setAddress(e.target.value); setLookup("idle"); place.current = null; }}
-            placeholder="Address, e.g. 1675 Rt 309, Coopersburg"
-            autoComplete="street-address"
-            enterKeyHint="next"
-          />
-          {lookup === "busy" && (
-            <span className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin rounded-full border-2 border-[var(--accent)] border-t-transparent" />
-          )}
-          {lookup === "found" && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--accent)]">✓</span>}
+        <div className="grid grid-cols-2 gap-1 rounded-xl bg-[var(--press)] p-1 text-[13px] font-medium">
+          {([["address", "Address"], ["here", "My location"]] as const).map(([m, label]) => (
+            <button
+              key={m}
+              type="button"
+              aria-pressed={mode === m}
+              onClick={() => {
+                setMode(m);
+                if (m === "here") onUseMyLocation();
+              }}
+              className={`flex items-center justify-center gap-1.5 rounded-lg py-1.5 ${mode === m ? "bg-[var(--accent)] text-[var(--on-accent)]" : "text-[var(--ink)]"}`}
+            >
+              {m === "here" && <LocateIcon size={14} />} {label}
+            </button>
+          ))}
         </div>
-        {lookup === "missing" && (
-          <p className="text-[12px] text-[var(--warn)]">Couldn&apos;t find that address. Add the town, or drag the map instead.</p>
+        {mode === "address" ? (
+          <>
+            <div className="relative">
+              <input
+                className={`${INPUT} pr-10`}
+                value={address}
+                onChange={(e) => { setAddress(e.target.value); setLookup("idle"); place.current = null; }}
+                placeholder="Address, e.g. 15475 Kutztown Rd"
+                autoComplete="street-address"
+                enterKeyHint="next"
+              />
+              {lookup === "busy" && (
+                <span className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin rounded-full border-2 border-[var(--accent)] border-t-transparent" />
+              )}
+              {lookup === "found" && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--accent)]">✓</span>}
+            </div>
+            {lookup === "missing" && (
+              <p className="text-[12px] text-[var(--warn)]">Couldn&apos;t find that address. Add the town, or drag the map instead.</p>
+            )}
+          </>
+        ) : (
+          <p className="flex h-11 items-center px-1 text-[13px] text-[var(--muted)]">
+            Pin moved to where you are. Drag the map if the pumps are a bit off.
+          </p>
         )}
-        <button
-          type="button"
-          onClick={onUseMyLocation}
-          className="flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-[var(--accent-soft)] text-[14px] font-semibold text-[var(--accent)] active:scale-[0.98]"
-        >
-          <LocateIcon size={16} /> Use my current location
-        </button>
         <input className={INPUT} value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (e.g. Rutter's Palmer)" required />
         <input className={INPUT} value={brand} onChange={(e) => setBrand(e.target.value)} placeholder="Brand (optional)" />
       </div>
