@@ -11,10 +11,16 @@
 // ever erased (archived stations keep their row; flags only hide), and writes are
 // rate-limited per IP, so a bad actor can't do lasting damage or flood the db.
 //
+// Hardening: every query is a prepared statement with bound parameters (no SQL is
+// ever built from input), ids must be integers, text is length-capped and stripped
+// of control/markup characters, bodies are capped at 2 KB and must be JSON, and
+// writes from other websites are refused (Origin check).
+//
 // Zero dependencies: Node's built-in HTTP server and node:sqlite (Node 22.13+).
 // Caddy proxies /api/* here; see server/README.md for setup.
 //
 // Env:
+//   E0GAS_ORIGIN     site allowed to write (default https://e0gas.danmarzari.com)
 //   E0GAS_DB         SQLite file (default /var/lib/e0gas/stations.db)
 //   PORT             default 8787 (listens on 127.0.0.1 only)
 import { createServer } from "node:http";
@@ -24,9 +30,11 @@ import { dirname } from "node:path";
 
 const DB_PATH = process.env.E0GAS_DB ?? "/var/lib/e0gas/stations.db";
 const PORT = Number(process.env.PORT ?? 8787);
-const MAX_STATIONS = 5000;
+const ORIGIN = process.env.E0GAS_ORIGIN ?? "https://e0gas.danmarzari.com";
+const MAX_ROWS = 5000;
 /** Writes allowed per IP per hour. */
-const WRITES_PER_HOUR = 60;
+const WRITES_PER_HOUR = 4;
+const MAX_BODY = 2_000;
 
 mkdirSync(dirname(DB_PATH), { recursive: true });
 const db = new DatabaseSync(DB_PATH);
@@ -59,12 +67,15 @@ const archiveStmt = db.prepare("UPDATE stations SET deleted_at = datetime('now')
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- drop the archive column from responses
 const row = ({ deleted_at, ...r }) => ({ ...r, octanes: JSON.parse(r.octanes) });
-const text = (v, max) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+/** Plain text only: no control characters or markup, trimmed and length-capped. */
+const text = (v, max) =>
+  typeof v === "string" ? v.replace(/[\u0000-\u001f\u007f<>]/g, "").replace(/\s+/g, " ").trim().slice(0, max) : "";
 
 /** Simple per-IP write budget (Caddy passes the client IP in X-Forwarded-For). */
 const writes = new Map();
 function overLimit(req) {
-  const ip = String(req.headers["x-forwarded-for"] ?? req.socket.remoteAddress ?? "").split(",")[0].trim();
+  // Caddy appends the real client IP last; earlier entries could be forged by the client.
+  const ip = String(req.headers["x-forwarded-for"] ?? req.socket.remoteAddress ?? "").split(",").pop().trim();
   const now = Date.now();
   const recent = (writes.get(ip) ?? []).filter((t) => now - t < 3_600_000);
   recent.push(now);
@@ -73,8 +84,18 @@ function overLimit(req) {
   return recent.length > WRITES_PER_HOUR;
 }
 
+/** Writes must be JSON from the e0gas site itself (or a tool with no Origin, like curl). */
+function badWrite(req) {
+  const origin = req.headers.origin;
+  if (origin && origin !== ORIGIN) return "writes are only accepted from the e0gas app";
+  if (req.method === "POST" && !String(req.headers["content-type"] ?? "").startsWith("application/json")) {
+    return "send JSON";
+  }
+  return null;
+}
+
 function send(res, status, body) {
-  res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
+  res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff" });
   res.end(body === undefined ? "" : JSON.stringify(body));
 }
 
@@ -83,7 +104,7 @@ async function readJson(req) {
   const chunks = [];
   for await (const c of req) {
     size += c.length;
-    if (size > 10_000) throw new Error("too large");
+    if (size > MAX_BODY) throw new Error("too large");
     chunks.push(c);
   }
   return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
@@ -106,22 +127,28 @@ function parseStation(b) {
   ];
 }
 
+const countHidden = db.prepare("SELECT COUNT(*) AS n FROM hidden");
+
 createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? "/", "http://localhost");
+    if (req.method === "POST" || req.method === "DELETE") {
+      const bad = badWrite(req);
+      if (bad) return send(res, 403, { error: bad });
+    }
     if (url.pathname === "/api/stations" && req.method === "GET") {
       return send(res, 200, listStmt.all().map(row));
     }
     if (url.pathname === "/api/stations" && req.method === "POST") {
-      if (overLimit(req)) return send(res, 429, { error: "too many changes, try again later" });
-      if (countStmt.get().n >= MAX_STATIONS) return send(res, 507, { error: "station limit reached" });
+      if (overLimit(req)) return send(res, 429, { error: "limit is 4 changes an hour, try again later" });
+      if (countStmt.get().n >= MAX_ROWS) return send(res, 507, { error: "station limit reached" });
       const v = parseStation(await readJson(req));
       if (typeof v === "string") return send(res, 400, { error: v });
       return send(res, 201, row(insertStmt.get(...v)));
     }
     const del = url.pathname.match(/^\/api\/stations\/(\d+)$/);
     if (del && req.method === "DELETE") {
-      if (overLimit(req)) return send(res, 429, { error: "too many changes, try again later" });
+      if (overLimit(req)) return send(res, 429, { error: "limit is 4 changes an hour, try again later" });
       archiveStmt.run(Number(del[1]));
       return send(res, 204);
     }
@@ -129,15 +156,16 @@ createServer(async (req, res) => {
       return send(res, 200, listHidden.all());
     }
     if (url.pathname === "/api/hidden" && req.method === "POST") {
-      if (overLimit(req)) return send(res, 429, { error: "too many changes, try again later" });
+      if (overLimit(req)) return send(res, 429, { error: "limit is 4 changes an hour, try again later" });
       const b = await readJson(req);
       const id = Number(b.station_id);
       if (!Number.isSafeInteger(id)) return send(res, 400, { error: "station_id must be an integer" });
+      if (countHidden.get().n >= MAX_ROWS) return send(res, 507, { error: "hidden limit reached" });
       return send(res, 201, hideStmt.get(id, text(b.name, 120)));
     }
     const unhide = url.pathname.match(/^\/api\/hidden\/(-?\d+)$/);
     if (unhide && req.method === "DELETE") {
-      if (overLimit(req)) return send(res, 429, { error: "too many changes, try again later" });
+      if (overLimit(req)) return send(res, 429, { error: "limit is 4 changes an hour, try again later" });
       unhideStmt.run(Number(unhide[1]));
       return send(res, 204);
     }
