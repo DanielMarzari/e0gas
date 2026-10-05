@@ -38,9 +38,12 @@ jobs:
           ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
 
       - name: Deploy
-        # Static export — Caddy serves /var/www/apps/e0gas directly, no PM2 process.
+        # Scoped deploy user with rrsync — the key is command-restricted to
+        # rsync into /var/www/apps/e0gas, so no destination path is needed
+        # (and attempting one would be rejected). Caddy serves the dir
+        # directly, no PM2 process.
         run: |
           rsync -avz --delete \
             -e "ssh -i ~/.ssh/deploy_key" \
             out/ \
-            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/var/www/apps/e0gas/
+            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:
