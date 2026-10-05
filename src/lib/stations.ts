@@ -8,6 +8,8 @@ export type Station = {
   state: string;
   brand: string;
   octanes: number[];
+  /** Added on this device with the + button (negative id). */
+  custom?: boolean;
 };
 
 type Row = [number, number, string, string, string, string, string, number[], number];
@@ -17,10 +19,65 @@ export async function loadStations(): Promise<{ updated: string; stations: Stati
   const json: { updated: string; stations: Row[] } = await res.json();
   return {
     updated: json.updated,
-    stations: json.stations.map(([lat, lng, name, street, city, state, brand, octanes, id]) => ({
+    stations: dedupe(json.stations.map(([lat, lng, name, street, city, state, brand, octanes, id]) => ({
       id, lat, lng, name, street, city, state, brand, octanes,
-    })),
+    }))),
   };
+}
+
+const brandKey = (s: Station) =>
+  (s.brand && s.brand !== "NONE" ? s.brand : s.name.split(" ")[0] ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+const streetNo = (s: Station) => s.street.match(/^\s*(\d+)/)?.[1];
+const storeNo = (s: Station) => s.name.match(/#\s*(\d+)/)?.[1];
+
+/** Of two listings for one station, keep the more informative one. */
+function richness(s: Station) {
+  return (storeNo(s) ? 4 : 0) + (/^\d+$/.test(s.city) ? -4 : 0) + s.octanes.length + s.name.length / 100;
+}
+
+/**
+ * pure-gas.org often lists one station twice (e.g. "Sheetz #746, 951 Trexlertown Rd" and
+ * "Sheetz, Rt 100 & Cetronia Rd"). Merge same-brand listings that sit within 150 m, or share
+ * a street number within 1 km — unless their store numbers say they're different stores.
+ */
+export function dedupe(stations: Station[]): Station[] {
+  const cell = (lat: number, lng: number) => `${Math.round(lat * 100)},${Math.round(lng * 100)}`;
+  const grid = new Map<string, Station[]>();
+  const dropped = new Set<number>();
+  const merged = new Map<number, number[]>();
+  const keys = new Map(stations.map((s) => [s.id, brandKey(s)]));
+  for (const s of stations) {
+    const k = keys.get(s.id)!;
+    for (let dy = -1; dy <= 1 && k; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        for (const t of grid.get(cell(s.lat + dy / 100, s.lng + dx / 100)) ?? []) {
+          if (dropped.has(t.id) || keys.get(t.id) !== k) continue;
+          const a = storeNo(s), b = storeNo(t);
+          if (a && b && a !== b) continue;
+          const meters = milesBetween(s.lat, s.lng, t.lat, t.lng) * 1609.34;
+          const sameNo = streetNo(s) != null && streetNo(s) === streetNo(t);
+          if (meters > 150 && !(sameNo && meters < 1000)) continue;
+          const [keep, lose] = richness(s) > richness(t) ? [s, t] : [t, s];
+          dropped.add(lose.id);
+          merged.set(keep.id, [...(merged.get(keep.id) ?? keep.octanes), ...(merged.get(lose.id) ?? lose.octanes)]);
+          if (lose === s) break;
+        }
+        if (dropped.has(s.id)) break;
+      }
+      if (dropped.has(s.id)) break;
+    }
+    if (dropped.has(s.id)) continue;
+    const c = cell(s.lat, s.lng);
+    const bucket = grid.get(c);
+    if (bucket) bucket.push(s);
+    else grid.set(c, [s]);
+  }
+  return stations
+    .filter((s) => !dropped.has(s.id))
+    .map((s) => {
+      const o = merged.get(s.id);
+      return o ? { ...s, octanes: [...new Set(o)].sort((a, b) => a - b) } : s;
+    });
 }
 
 /** Great-circle distance in miles — a rough "as the crow flies" estimate. */
@@ -41,8 +98,19 @@ export function formatMiles(mi: number): string {
 
 /** Search by name + address so Google Maps opens the actual business listing, not a bare pin. */
 export function googleMapsUrl(s: Station): string {
+  // A station you added without an address: drop a pin on its coordinates.
+  if (s.custom && !s.street) return `https://www.google.com/maps/search/?api=1&query=${s.lat},${s.lng}`;
   const query = [s.name, s.street, s.city, s.state].filter(Boolean).join(", ");
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+}
+
+/**
+ * GasBuddy has no public API or stable per-station links, so open its price list for the
+ * station's town. Its prices are regular/mid/premium — it doesn't track ethanol-free separately.
+ */
+export function gasBuddyUrl(s: Station): string {
+  const where = /^\d{5}$/.test(s.city) ? s.city : [titleCase(s.city), s.state].filter(Boolean).join(", ");
+  return `https://www.gasbuddy.com/home?search=${encodeURIComponent(where)}&fuel=1`;
 }
 
 export type Platform = "ios" | "android" | "desktop";

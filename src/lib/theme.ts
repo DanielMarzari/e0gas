@@ -1,4 +1,12 @@
-export type Mode = "system" | "light" | "dark";
+export type Mode = "system" | "light" | "dim" | "dark";
+/** What's actually shown. "dim" is a softer slate dark; "dark" is near-black. */
+export type Shade = "light" | "dim" | "dark";
+
+/** Auto follows the phone's setting, using the softer Dim look at night. */
+export const resolveShade = (mode: Mode, systemDark: boolean): Shade =>
+  mode === "system" ? (systemDark ? "dim" : "light") : mode;
+
+export const BG = { light: "#eef0ec", dim: "#2b303b", dark: "#191c24" } as const;
 
 type Swatch = { accent: string; soft: string; on: string };
 export type Palette = { name: string; light: Swatch; dark: Swatch };
@@ -47,7 +55,7 @@ export function loadSettings(): Settings {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? "null");
     return {
       palette: raw?.palette in PALETTES ? raw.palette : fallback.palette,
-      mode: ["system", "light", "dark"].includes(raw?.mode) ? raw.mode : fallback.mode,
+      mode: ["system", "light", "dim", "dark"].includes(raw?.mode) ? raw.mode : fallback.mode,
     };
   } catch {
     return fallback;
@@ -59,16 +67,16 @@ export function saveSettings(s: Settings) {
 }
 
 /** Push the theme onto <html> so the CSS variables follow it. */
-export function applyTheme(palette: string, dark: boolean) {
-  const sw = (PALETTES[palette] ?? PALETTES[DEFAULT_PALETTE])[dark ? "dark" : "light"];
+export function applyTheme(palette: string, shade: Shade) {
+  const sw = paletteSwatch(palette, shade);
   const root = document.documentElement;
-  root.dataset.theme = dark ? "dark" : "light";
+  root.dataset.theme = shade;
   root.style.setProperty("--accent", sw.accent);
   root.style.setProperty("--accent-soft", sw.soft);
   root.style.setProperty("--on-accent", sw.on);
   // Browser chrome color: the media-keyed metas from layout only know the system theme.
   for (const m of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
-    m.content = dark ? "#191c24" : "#eef0ec";
+    m.content = BG[shade];
   }
 }
 
@@ -78,8 +86,8 @@ export function applyTheme(palette: string, dark: boolean) {
  */
 export const THEME_BOOT_SCRIPT = `try{var s=JSON.parse(localStorage.getItem(${JSON.stringify(KEY)})||"null")||{};var P=${JSON.stringify(
   Object.fromEntries(Object.entries(PALETTES).map(([k, p]) => [k, [p.light, p.dark]])),
-)};var d=s.mode==="dark"||(s.mode!=="light"&&matchMedia("(prefers-color-scheme: dark)").matches);var p=P[s.palette]||P[${JSON.stringify(DEFAULT_PALETTE)}];var w=p[d?1:0];var r=document.documentElement;r.dataset.theme=d?"dark":"light";r.style.setProperty("--accent",w.accent);r.style.setProperty("--accent-soft",w.soft);r.style.setProperty("--on-accent",w.on)}catch(e){}`;
+)};var m=s.mode;var t=m==="light"||m==="dim"||m==="dark"?m:(matchMedia("(prefers-color-scheme: dark)").matches?"dim":"light");var p=P[s.palette]||P[${JSON.stringify(DEFAULT_PALETTE)}];var w=p[t==="light"?0:1];var r=document.documentElement;r.dataset.theme=t;r.style.setProperty("--accent",w.accent);r.style.setProperty("--accent-soft",w.soft);r.style.setProperty("--on-accent",w.on)}catch(e){}`;
 
-export function paletteSwatch(palette: string, dark: boolean): Swatch {
-  return (PALETTES[palette] ?? PALETTES[DEFAULT_PALETTE])[dark ? "dark" : "light"];
+export function paletteSwatch(palette: string, shade: Shade): Swatch {
+  return (PALETTES[palette] ?? PALETTES[DEFAULT_PALETTE])[shade === "light" ? "light" : "dark"];
 }
