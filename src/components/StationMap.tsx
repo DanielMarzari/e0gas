@@ -25,6 +25,8 @@ type Props = {
   /** Always drawn on top with a star, unclustered. */
   favorites: Station[];
   user: LatLng | null;
+  /** Reframe the map on the user and nearest stations when the location changes. */
+  frameUser: boolean;
   /** Stations to frame alongside the user (nearest few). */
   focus: Station[];
   selected: Station | null;
@@ -199,7 +201,7 @@ function installStationLayers(map: maplibregl.Map, shade: Shade, accent: string)
 }
 
 export default function StationMap({
-  stations, favorites, user, focus, selected, onSelect, radius, shade, accent, apiRef,
+  stations, favorites, user, frameUser, focus, selected, onSelect, radius, shade, accent, apiRef,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -390,6 +392,7 @@ export default function StationMap({
         userMarkerRef.current = new maplibregl.Marker({ element: el });
       }
       userMarkerRef.current.setLngLat([user.lng, user.lat]).addTo(map);
+      if (!frameUser) return;
 
       const bounds = new maplibregl.LngLatBounds([user.lng, user.lat], [user.lng, user.lat]);
       for (const s of focus.slice(0, 3)) bounds.extend([s.lng, s.lat]);

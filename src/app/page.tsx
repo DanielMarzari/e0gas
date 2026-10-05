@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import {
   type Station, type Platform, loadStations, milesBetween, formatMiles, mapsLinkProps, gasBuddyUrl, detectPlatform, titleCase,
 } from "@/lib/stations";
@@ -25,9 +26,11 @@ type LocState = "idle" | "locating" | "denied" | "error" | "ok";
 type Ranked = Station & { miles: number };
 type Panel = "settings" | "filter" | null;
 /** Bottom-sheet list size, changed by dragging or tapping its handle. */
-type SheetSize = "min" | "normal" | "full";
+type SheetSize = "none" | "one" | "three" | "full";
 
 const LIST_SIZE = 25;
+/** Shared spring for the search morph, side buttons and bottom sheet. */
+const SPRING = { type: "spring", stiffness: 420, damping: 38, mass: 0.9 } as const;
 /** Where the placement pin sits while adding a station (fraction of screen height). */
 const PIN_Y = 0.32;
 const FLOAT_BUTTON =
@@ -50,7 +53,7 @@ export default function Home() {
   const [loc, setLoc] = useState<LocState>("idle");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   // Start low so the map gets the screen.
-  const [sheetSize, setSheetSize] = useState<SheetSize>("min");
+  const [sheetSize, setSheetSize] = useState<SheetSize>("one");
   const [showInstall, setShowInstall] = useState(false);
   const { platform: installPlatform } = useInstall();
   const [panel, setPanel] = useState<Panel>(null);
@@ -99,6 +102,12 @@ export default function Home() {
   const visible = useMemo(() => applyFilter(all, filter, origin, favSet), [all, filter, origin, favSet]);
   // Favorites draw as stars on their own layer; leave them out of the plain dots.
   const mapStations = useMemo(() => visible.filter((s) => !favSet.has(s.id)), [visible, favSet]);
+  // …and like everything else, they only show when they match the search and filters.
+  const mapFavorites = useMemo(() => {
+    if (!filtering) return favorites;
+    const ids = new Set(visible.map((s) => s.id));
+    return favorites.filter((s) => ids.has(s.id));
+  }, [favorites, visible, filtering]);
 
   const rank = (list: Station[]): Ranked[] =>
     origin
@@ -110,14 +119,16 @@ export default function Home() {
     [origin, visible, all.length],
   );
   // ── Actions ──
-  const locate = () => {
+  const locate = (then?: (at: LatLng) => void) => {
     if (!("geolocation" in navigator)) return setLoc("error");
     setLoc("locating");
     navigator.geolocation.getCurrentPosition(
       (p) => {
-        setUser({ lat: p.coords.latitude, lng: p.coords.longitude });
+        const at = { lat: p.coords.latitude, lng: p.coords.longitude };
+        setUser(at);
         setLoc("ok");
         setSelectedId(null);
+        then?.(at);
       },
       (err) => setLoc(err.code === err.PERMISSION_DENIED ? "denied" : "error"),
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 },
@@ -169,7 +180,14 @@ export default function Home() {
     const api = mapApi.current;
     const hit = await geocode(address, user ?? api?.center());
     if (hit && api) api.flyTo(hit, 17, innerHeight * PIN_Y);
-    return !!hit;
+    return hit;
+  };
+
+  /** While adding: put the pin on where you are (asking for location if needed). */
+  const pinMyLocation = () => {
+    const fly = (at: LatLng) => mapApi.current?.flyTo(at, 17, innerHeight * PIN_Y);
+    if (user) fly(user);
+    else locate(fly);
   };
 
   const saveStation = (n: NewStation) => {
@@ -178,7 +196,7 @@ export default function Home() {
     const at = api.latLngAt(innerWidth / 2, innerHeight * PIN_Y);
     const s: Station = {
       id: -Date.now(), lat: +at.lat.toFixed(5), lng: +at.lng.toFixed(5),
-      name: n.name, brand: n.brand, street: n.street, city: n.city, state: "", octanes: n.octanes, custom: true,
+      name: n.name, brand: n.brand, street: n.street, city: n.city, state: n.state, octanes: n.octanes, custom: true,
     };
     setCustom((c) => [...c, s]);
     setAdding(false);
@@ -198,8 +216,9 @@ export default function Home() {
     <div className="fixed inset-x-0 top-0 h-[100dvh] overflow-hidden bg-[var(--bg)]">
       <StationMap
         stations={mapStations}
-        favorites={favorites}
+        favorites={mapFavorites}
         user={user}
+        frameUser={!adding}
         focus={nearest}
         selected={selected}
         onSelect={adding ? () => {} : select}
@@ -218,12 +237,17 @@ export default function Home() {
       {/* Tap outside an open panel to close it */}
       {panel && <div className="absolute inset-0 z-10" onClick={() => setPanel(null)} aria-hidden />}
 
-      {/* ── Search bar: opens from the search button ── */}
+      {/* ── Search bar: grows out of the search button ── */}
       {searchOpen && (
         <div className="absolute inset-x-0 top-0 z-20 px-4 pt-[max(14px,env(safe-area-inset-top))]">
           <div className="mx-auto max-w-xl">
-            <div className="flex h-12 items-center rounded-full bg-[var(--surface-strong)] shadow-[0_6px_24px_-8px_rgba(15,23,42,0.25)] ring-1 ring-[var(--ring)] backdrop-blur-md focus-within:ring-[var(--accent)]">
-              <span className="pl-4 pr-2 text-[var(--accent)]"><SearchIcon size={18} /></span>
+            <motion.div
+              layoutId="search"
+              transition={SPRING}
+              style={{ borderRadius: 24 }}
+              className="flex h-12 items-center overflow-hidden bg-[var(--surface-strong)] shadow-[0_6px_24px_-8px_rgba(15,23,42,0.25)] ring-1 ring-[var(--ring)] backdrop-blur-md focus-within:ring-[var(--accent)]"
+            >
+              <motion.span layout="position" className="pl-4 pr-2 text-[var(--accent)]"><SearchIcon size={18} /></motion.span>
               <input
                 autoFocus
                 value={filter.query}
@@ -247,9 +271,16 @@ export default function Home() {
               <button onClick={closeSearch} aria-label="Close search" className="mr-1 grid h-10 w-10 shrink-0 place-items-center text-[var(--muted)]">
                 <CloseIcon />
               </button>
-            </div>
+            </motion.div>
+            <AnimatePresence>
             {panel === "filter" && (
-              <div className="mt-2.5">
+              <motion.div
+                className="mt-2.5 origin-top"
+                initial={{ opacity: 0, y: -8, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -8, scale: 0.98 }}
+                transition={{ duration: 0.18 }}
+              >
                 <FilterPanel
                   filter={filter}
                   hasLocation={!!user}
@@ -258,23 +289,32 @@ export default function Home() {
                   onChange={setFilter}
                   onDone={() => setPanel(null)}
                 />
-              </div>
+              </motion.div>
             )}
+            </AnimatePresence>
           </div>
         </div>
       )}
 
       {/* ── Side buttons: search · settings · add · locate ── */}
       {panel !== "filter" && (
-        <div
-          className="absolute right-4 z-20 flex flex-col items-end gap-2.5"
-          style={{ top: `calc(max(14px, env(safe-area-inset-top)) + ${searchOpen ? 60 : 0}px)` }}
+        <motion.div
+          className="absolute right-4 top-[max(14px,env(safe-area-inset-top))] z-20 flex flex-col items-end gap-2.5"
+          animate={{ y: searchOpen ? 60 : 0 }}
+          transition={SPRING}
         >
           {!searchOpen && (
-            <button onClick={openSearch} aria-label="Search" className={`relative ${FLOAT_BUTTON}`}>
-              <SearchIcon />
+            <motion.button
+              layoutId="search"
+              transition={SPRING}
+              style={{ borderRadius: 24 }}
+              onClick={openSearch}
+              aria-label="Search"
+              className={`relative ${FLOAT_BUTTON}`}
+            >
+              <motion.span layout="position"><SearchIcon /></motion.span>
               {isActive(filter) && <Badge n={filterCount(filter) || 1} />}
-            </button>
+            </motion.button>
           )}
           <div className="relative">
             <button onClick={() => togglePanel("settings")} aria-label="Settings" aria-expanded={panel === "settings"} className={FLOAT_BUTTON}>
@@ -302,21 +342,27 @@ export default function Home() {
               >
                 <PlusIcon />
               </button>
-              <button onClick={locate} aria-label={user ? "Update my location" : "Share my location"} className={FLOAT_BUTTON}>
+              <button onClick={() => locate()} aria-label={user ? "Update my location" : "Share my location"} className={FLOAT_BUTTON}>
                 <LocateIcon spinning={loc === "locating"} />
               </button>
             </>
           )}
-        </div>
+        </motion.div>
       )}
 
       {/* ── Bottom sheet ── */}
       <section className="absolute inset-x-0 bottom-0 mx-auto max-w-xl px-3 pb-[max(12px,env(safe-area-inset-bottom))]">
         <div className="sheet overflow-hidden rounded-[28px] bg-[var(--surface-strong)] shadow-[0_-8px_40px_-12px_rgba(15,23,42,0.3)] ring-1 ring-[var(--ring)] backdrop-blur-xl">
+          <AutoHeight>
           {showInstall ? (
             <InstallSheet platform={installPlatform} onClose={() => setShowInstall(false)} />
           ) : adding ? (
-            <AddStationForm onSave={saveStation} onCancel={() => setAdding(false)} onFindAddress={findAddress} />
+            <AddStationForm
+              onSave={saveStation}
+              onCancel={() => setAdding(false)}
+              onFindAddress={findAddress}
+              onUseMyLocation={pinMyLocation}
+            />
           ) : selected ? (
             <SelectedCard
               station={selected}
@@ -337,8 +383,9 @@ export default function Home() {
               onSelect={select}
             />
           ) : (
-            <Intro loc={loc} onLocate={locate} />
+            <Intro loc={loc} onLocate={() => locate()} />
           )}
+          </AutoHeight>
         </div>
       </section>
     </div>
@@ -408,12 +455,16 @@ function StationRow({
   );
 }
 
-const SIZES: SheetSize[] = ["min", "normal", "full"];
+const SIZES: SheetSize[] = ["none", "one", "three", "full"];
+const ROWS: Record<SheetSize, number> = { none: 0, one: 1, three: 3, full: Infinity };
+/** Roughly one list row: dragging this far moves one size step. */
+const STEP_PX = 70;
 
-/** Drag (or tap) handle: drag up to grow the list, down to shrink it; tap cycles. */
+/** Drag the handle up to show more rows, down to show fewer (down to none); tap to toggle. */
 function SheetHandle({ size, onResize }: { size: SheetSize; onResize: (s: SheetSize) => void }) {
   const startY = useRef<number | null>(null);
-  const step = (dir: 1 | -1) => onResize(SIZES[Math.min(2, Math.max(0, SIZES.indexOf(size) + dir))]);
+  const go = (steps: number) =>
+    onResize(SIZES[Math.min(SIZES.length - 1, Math.max(0, SIZES.indexOf(size) + steps))]);
   return (
     <button
       className="block w-full touch-none pb-1 pt-2.5"
@@ -422,13 +473,30 @@ function SheetHandle({ size, onResize }: { size: SheetSize; onResize: (s: SheetS
       onPointerUp={(e) => {
         const dy = startY.current == null ? 0 : e.clientY - startY.current;
         startY.current = null;
-        if (dy < -24) step(1);
-        else if (dy > 24) step(-1);
-        else step(size === "full" ? -1 : 1);
+        if (Math.abs(dy) > 20) go(-Math.sign(dy) * Math.max(1, Math.round(Math.abs(dy) / STEP_PX)));
+        else onResize(size === "none" || size === "one" ? "three" : size === "three" ? "full" : "one");
       }}
     >
       <span className="mx-auto block h-1.5 w-10 rounded-full bg-[var(--hairline)]" />
     </button>
+  );
+}
+
+/** Animates its height to fit whatever is inside — the bottom sheet grows and shrinks smoothly. */
+function AutoHeight({ children }: { children: React.ReactNode }) {
+  const inner = useRef<HTMLDivElement>(null);
+  const [h, setH] = useState<number | "auto">("auto");
+  useEffect(() => {
+    const el = inner.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setH(el.offsetHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return (
+    <motion.div animate={{ height: h }} initial={false} transition={SPRING} style={{ overflow: "hidden" }}>
+      <div ref={inner}>{children}</div>
+    </motion.div>
   );
 }
 
@@ -438,25 +506,35 @@ function NearestList({
   title: string; items: Ranked[]; favorites: Set<number>; size: SheetSize;
   onResize: (s: SheetSize) => void; onSelect: (id: number) => void;
 }) {
-  const shown = size === "full" ? items : items.slice(0, size === "normal" ? 3 : 1);
+  const shown = items.slice(0, ROWS[size]);
   return (
     <div>
       <SheetHandle size={size} onResize={onResize} />
-      <div className="flex items-baseline justify-between px-5 pb-1 pt-0.5">
+      <div className={`flex items-baseline justify-between px-5 pt-0.5 ${size === "none" ? "pb-4" : "pb-1"}`}>
         <h2 className="text-[17px] font-semibold tracking-tight text-[var(--ink)]">{title}</h2>
         {items.length > 3 && (
-          <button onClick={() => onResize(size === "full" ? "normal" : "full")} className="text-[13px] font-medium text-[var(--accent)]">
+          <button onClick={() => onResize(size === "full" ? "one" : "full")} className="text-[13px] font-medium text-[var(--accent)]">
             {size === "full" ? "Less" : `Show ${items.length}`}
           </button>
         )}
       </div>
-      {items.length === 0 ? (
+      {size === "none" ? null : items.length === 0 ? (
         <p className="px-5 pb-5 text-[14px] text-[var(--muted)]">No stations match. Try a wider radius or a different search.</p>
       ) : (
         <ul className={`overflow-y-auto overscroll-contain px-2 pb-2 ${size === "full" ? "max-h-[62dvh]" : ""}`}>
-          {shown.map((s, i) => (
-            <li key={s.id}><StationRow s={s} index={i} favorite={favorites.has(s.id)} onSelect={onSelect} /></li>
-          ))}
+          <AnimatePresence initial={false}>
+            {shown.map((s, i) => (
+              <motion.li
+                key={s.id}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2, delay: Math.min(i, 6) * 0.025 }}
+              >
+                <StationRow s={s} index={i} favorite={favorites.has(s.id)} onSelect={onSelect} />
+              </motion.li>
+            ))}
+          </AnimatePresence>
         </ul>
       )}
     </div>
