@@ -5,7 +5,10 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import {
   type Station, type Platform, loadStations, milesBetween, formatMiles, mapsLinkProps, detectPlatform, titleCase,
 } from "@/lib/stations";
-import { type LatLng, type MarkerLook, MARKER_LOOKS } from "@/components/StationMap";
+import type { LatLng } from "@/components/StationMap";
+import {
+  type Mode, type Settings, PALETTES, DEFAULT_PALETTE, loadSettings, saveSettings, applyTheme, paletteSwatch,
+} from "@/lib/theme";
 
 const StationMap = dynamic(() => import("@/components/StationMap"), { ssr: false });
 
@@ -13,6 +16,8 @@ type LocState = "idle" | "locating" | "denied" | "error" | "ok";
 type Ranked = Station & { miles: number };
 
 const LIST_SIZE = 25;
+const FLOAT_BUTTON =
+  "grid h-12 w-12 place-items-center rounded-full bg-[var(--surface)] text-[var(--accent)] shadow-[0_6px_24px_-8px_rgba(15,23,42,0.25)] ring-1 ring-[var(--ring)] backdrop-blur-md active:scale-95 transition";
 const DARK_QUERY = "(prefers-color-scheme: dark)";
 
 function subscribeDark(onChange: () => void) {
@@ -28,13 +33,21 @@ export default function Home() {
   const [loc, setLoc] = useState<LocState>("idle");
   const [selected, setSelected] = useState<Station | null>(null);
   const [expanded, setExpanded] = useState(false);
-  const dark = useSyncExternalStore(subscribeDark, () => matchMedia(DARK_QUERY).matches, () => false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const systemDark = useSyncExternalStore(subscribeDark, () => matchMedia(DARK_QUERY).matches, () => false);
   // Browser-only values; the map and station links they affect never render on the server.
-  const [look] = useState<MarkerLook>(() => {
-    if (typeof window === "undefined") return "dots";
-    const q = new URLSearchParams(location.search).get("look") as MarkerLook | null;
-    return q && MARKER_LOOKS.includes(q) ? q : "dots";
-  });
+  const [settings, setSettings] = useState<Settings>(() =>
+    typeof window === "undefined" ? { palette: DEFAULT_PALETTE, mode: "system" } : loadSettings(),
+  );
+  const dark = settings.mode === "dark" || (settings.mode === "system" && systemDark);
+  const accent = paletteSwatch(settings.palette, dark).accent;
+  const updateSettings = (patch: Partial<Settings>) =>
+    setSettings((s) => {
+      const next = { ...s, ...patch };
+      saveSettings(next);
+      return next;
+    });
+  useEffect(() => applyTheme(settings.palette, dark), [settings.palette, dark]);
   const [platform] = useState<Platform>(() => (typeof window === "undefined" ? "desktop" : detectPlatform()));
 
   useEffect(() => {
@@ -77,34 +90,28 @@ export default function Home() {
         selectedId={selected?.id ?? null}
         onSelect={(s) => { setSelected(s); if (s) setExpanded(false); }}
         dark={dark}
-        look={look}
+        accent={accent}
       />
 
-      {/* ── Brand ── */}
-      <header className="pointer-events-none absolute inset-x-0 top-0 flex justify-center pt-[max(14px,env(safe-area-inset-top))] px-4">
-        <div className="pointer-events-auto flex items-center gap-2.5 rounded-full bg-[var(--surface)] py-2 pl-2 pr-4 shadow-[0_6px_24px_-8px_rgba(15,23,42,0.25)] ring-1 ring-[var(--ring)] backdrop-blur-md">
-          <span className="grid h-8 w-8 place-items-center rounded-full bg-[var(--accent)] text-[13px] font-bold tracking-tight text-[var(--on-accent)]">
-            E0
-          </span>
-          <div className="leading-tight">
-            <div className="text-[15px] font-semibold tracking-tight text-[var(--ink)]">e0 gas</div>
-            <div className="text-[11px] text-[var(--muted)]">
-              {stations.length ? `${stations.length.toLocaleString()} ethanol-free stations` : "Loading stations…"}
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* ── Re-center ── */}
-      {user && (
+      {/* ── Settings + re-center ── */}
+      <div className="absolute right-4 top-[max(14px,env(safe-area-inset-top))] z-20 flex flex-col items-end gap-2.5">
         <button
-          onClick={locate}
-          aria-label="Update my location"
-          className="absolute right-4 top-[max(14px,env(safe-area-inset-top))] grid h-12 w-12 place-items-center rounded-full bg-[var(--surface)] text-[var(--accent)] shadow-[0_6px_24px_-8px_rgba(15,23,42,0.25)] ring-1 ring-[var(--ring)] backdrop-blur-md active:scale-95 transition"
+          onClick={() => setSettingsOpen((o) => !o)}
+          aria-label="Settings"
+          aria-expanded={settingsOpen}
+          className={FLOAT_BUTTON}
         >
-          <LocateIcon spinning={loc === "locating"} />
+          <GearIcon />
         </button>
-      )}
+        {settingsOpen && (
+          <SettingsPanel settings={settings} dark={dark} onChange={updateSettings} onClose={() => setSettingsOpen(false)} />
+        )}
+        {user && !settingsOpen && (
+          <button onClick={locate} aria-label="Update my location" className={FLOAT_BUTTON}>
+            <LocateIcon spinning={loc === "locating"} />
+          </button>
+        )}
+      </div>
 
       {/* ── Bottom sheet ── */}
       <section className="absolute inset-x-0 bottom-0 mx-auto max-w-xl px-3 pb-[max(12px,env(safe-area-inset-bottom))]">
@@ -209,8 +216,7 @@ function NearestList({
       </ul>
       {expanded && (
         <div className="px-5 pb-1 pt-1">
-          <OctaneNote />
-          <p className="mt-1.5 text-[11px] text-[var(--muted)]">
+          <p className="text-[11px] text-[var(--muted)]">
             Straight-line distances{updated ? ` · stations updated ${updated}` : ""}. Call ahead to confirm.
           </p>
         </div>
@@ -235,7 +241,6 @@ function SelectedCard({
             {s.brand && <span>{titleCase(s.brand)}</span>}
           </div>
           <Octanes octanes={s.octanes} />
-          {s.octanes.length > 0 && <div className="mt-2"><OctaneNote /></div>}
         </div>
         <button
           onClick={onClose}
@@ -249,7 +254,7 @@ function SelectedCard({
         {...mapsLinkProps(s, platform)}
         className="mt-4 flex h-13 w-full items-center justify-center gap-2 rounded-2xl bg-[var(--accent)] py-3.5 text-[16px] font-semibold text-[var(--on-accent)] transition active:scale-[0.98]"
       >
-        Open in Google Maps
+        Prices &amp; directions in Google Maps
       </a>
     </div>
   );
@@ -281,15 +286,6 @@ function Octanes({ octanes }: { octanes: number[] }) {
   );
 }
 
-function OctaneNote() {
-  return (
-    <p className="text-[11px] leading-snug text-[var(--muted)]">
-      <span className="font-semibold text-[var(--ink)]">Octane:</span> 90 is the classic ethanol-free
-      &ldquo;rec fuel&rdquo; for boats, mowers and small engines; 91–93 is premium. Use whatever your engine calls for.
-    </p>
-  );
-}
-
 function LocateIcon({ spinning }: { spinning?: boolean }) {
   return (
     <svg
@@ -301,6 +297,63 @@ function LocateIcon({ spinning }: { spinning?: boolean }) {
       <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
       <circle cx="12" cy="12" r="6.5" />
       <circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function SettingsPanel({
+  settings, dark, onChange, onClose,
+}: { settings: Settings; dark: boolean; onChange: (p: Partial<Settings>) => void; onClose: () => void }) {
+  const modes: { id: Mode; label: string }[] = [
+    { id: "system", label: "Auto" },
+    { id: "light", label: "Light" },
+    { id: "dark", label: "Dark" },
+  ];
+  return (
+    <>
+      {/* Tap outside to close */}
+      <div className="fixed inset-0 -z-10" onClick={onClose} aria-hidden />
+      <div className="w-60 rounded-3xl bg-[var(--surface-strong)] p-4 shadow-[0_10px_40px_-12px_rgba(15,23,42,0.35)] ring-1 ring-[var(--ring)] backdrop-blur-xl">
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">Color</div>
+        <div className="mt-2 grid grid-cols-6 gap-2">
+          {Object.entries(PALETTES).map(([id, p]) => {
+            const on = settings.palette === id;
+            return (
+              <button
+                key={id}
+                onClick={() => onChange({ palette: id })}
+                aria-label={p.name}
+                aria-pressed={on}
+                title={p.name}
+                className={`h-7 w-7 rounded-full transition active:scale-90 ${on ? "ring-2 ring-[var(--ink)] ring-offset-2 ring-offset-[var(--surface-strong)]" : ""}`}
+                style={{ background: paletteSwatch(id, dark).accent }}
+              />
+            );
+          })}
+        </div>
+        <div className="mt-4 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">Appearance</div>
+        <div className="mt-2 grid grid-cols-3 gap-1 rounded-xl bg-[var(--press)] p-1">
+          {modes.map((m) => (
+            <button
+              key={m.id}
+              onClick={() => onChange({ mode: m.id })}
+              aria-pressed={settings.mode === m.id}
+              className={`rounded-lg py-1.5 text-[13px] font-medium transition ${settings.mode === m.id ? "bg-[var(--accent)] text-[var(--on-accent)]" : "text-[var(--ink)]"}`}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function GearIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
     </svg>
   );
 }

@@ -16,8 +16,10 @@
   color-scheme: light;
 }
 
+/* Dark: follows the system unless Settings pins light/dark (data-theme on <html>).
+   The accent trio is overridden inline from the chosen color palette. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #191c24;
     --ink: #f3f4f6;
     --muted: #9aa1ad;
@@ -32,8 +34,24 @@
     --on-accent: #08291c;
     color-scheme: dark;
   }
-  .user-dot { border-color: #191c24; }
+  :root:not([data-theme="light"]) .user-dot { border-color: #191c24; }
 }
+:root[data-theme="dark"] {
+  --bg: #191c24;
+  --ink: #f3f4f6;
+  --muted: #9aa1ad;
+  --accent: #34c48b;
+  --accent-soft: rgba(52, 196, 139, 0.14);
+  --warn: #f59e0b;
+  --surface: rgba(31, 34, 43, 0.88);
+  --surface-strong: rgba(31, 34, 43, 0.94);
+  --ring: rgba(255, 255, 255, 0.08);
+  --hairline: rgba(255, 255, 255, 0.18);
+  --press: rgba(255, 255, 255, 0.06);
+  --on-accent: #08291c;
+  color-scheme: dark;
+}
+:root[data-theme="dark"] .user-dot { border-color: #191c24; }
 
 html, body {
   height: 100%;
