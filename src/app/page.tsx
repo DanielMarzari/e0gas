@@ -32,10 +32,12 @@ type SheetSize = "open" | "none";
 const LIST_SIZE = 25;
 /** Shared spring for the search morph, side buttons and bottom sheet. */
 const SPRING = { type: "spring", stiffness: 420, damping: 38, mass: 0.9 } as const;
+/** The round buttons' tap: a quick press-in and springy pop back (same as search closing). */
+const PRESS = { whileTap: { scale: 0.86 }, transition: { type: "spring", stiffness: 520, damping: 20 } } as const;
 /** Where the placement pin sits while adding a station (fraction of screen height). */
 const PIN_Y = 0.32;
 const FLOAT_BUTTON =
-  "grid h-12 w-12 shrink-0 place-items-center rounded-full bg-[var(--surface)] text-[var(--accent)] shadow-[0_6px_24px_-8px_rgba(15,23,42,0.25)] ring-1 ring-[var(--ring)] backdrop-blur-md active:scale-95 transition";
+  "grid h-12 w-12 shrink-0 place-items-center rounded-full bg-[var(--surface)] text-[var(--accent)] shadow-[0_6px_24px_-8px_rgba(15,23,42,0.25)] ring-1 ring-[var(--ring)] backdrop-blur-md";
 const DARK_QUERY = "(prefers-color-scheme: dark)";
 
 function subscribeDark(onChange: () => void) {
@@ -59,6 +61,11 @@ export default function Home() {
   const { platform: installPlatform } = useInstall();
   const [panel, setPanel] = useState<Panel>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  /** Visible map area, for the "in view" count. */
+  const [view, setView] = useState<{ west: number; south: number; east: number; north: number } | null>(null);
+  /** Bottom edge of the open filter card, so the map can frame the radius beneath it. */
+  const filterRef = useRef<HTMLDivElement>(null);
+  const [filterBottom, setFilterBottom] = useState(0);
   const [adding, setAdding] = useState(false);
   const [filter, setFilter] = useState<Filter>(NO_FILTER);
   /** Search origin when location isn't shared: the map center when search was opened. */
@@ -119,6 +126,25 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [origin, visible, all.length],
   );
+  const inView = useMemo(() => {
+    if (!view) return null;
+    const { west, south, east, north } = view;
+    return visible.filter((s) => s.lat >= south && s.lat <= north && s.lng >= west && s.lng <= east).length;
+  }, [visible, view]);
+
+  useEffect(() => {
+    const el = filterRef.current;
+    if (panel !== "filter" || !el) return;
+    const ro = new ResizeObserver(() => setFilterBottom(el.getBoundingClientRect().bottom));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [panel, searchOpen]);
+  // While filters are open, frame the radius (and your pin) in the map below them;
+  // afterwards, back to the upper part of the screen above the list.
+  const insets = panel === "filter" && filterBottom
+    ? { top: Math.round(filterBottom + 16), bottom: 100 }
+    : { top: 90, bottom: typeof window === "undefined" ? 300 : Math.round(window.innerHeight * 0.42) };
+
   // ── Actions ──
   const locate = (then?: (at: LatLng) => void) => {
     if (!("geolocation" in navigator)) return setLoc("error");
@@ -230,6 +256,8 @@ export default function Home() {
         shade={shade}
         accent={accent}
         apiRef={mapApi}
+        insets={insets}
+        onViewChange={setView}
       />
 
       {adding && (
@@ -266,6 +294,7 @@ export default function Home() {
       <AnimatePresence>
         {searchOpen && panel === "filter" && (
           <motion.div
+            ref={filterRef}
             className="absolute inset-x-4 top-[calc(max(14px,env(safe-area-inset-top))+60px)] z-20 ml-auto max-w-xl origin-top"
             initial={{ opacity: 0, y: -8, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -288,9 +317,9 @@ export default function Home() {
       {panel !== "filter" && (
         <div className="absolute right-4 top-[calc(max(14px,env(safe-area-inset-top))+60px)] z-20 flex flex-col items-end gap-2.5">
           <div className="relative">
-            <button onClick={() => togglePanel("settings")} aria-label="Settings" aria-expanded={panel === "settings"} className={FLOAT_BUTTON}>
+            <motion.button {...PRESS} onClick={() => togglePanel("settings")} aria-label="Settings" aria-expanded={panel === "settings"} className={FLOAT_BUTTON}>
               <GearIcon />
-            </button>
+            </motion.button>
             {panel === "settings" && (
               <div className="absolute right-0 top-[58px]">
                 <SettingsPanel
@@ -305,17 +334,18 @@ export default function Home() {
           </div>
           {panel !== "settings" && (
             <>
-              <button
+              <motion.button
+                {...PRESS}
                 onClick={startAdding}
                 aria-label="Add a station"
                 aria-pressed={adding}
                 className={`${FLOAT_BUTTON} ${adding ? "!bg-[var(--accent)] !text-[var(--on-accent)]" : ""}`}
               >
                 <PlusIcon />
-              </button>
-              <button onClick={() => locate()} aria-label={user ? "Update my location" : "Share my location"} className={FLOAT_BUTTON}>
+              </motion.button>
+              <motion.button {...PRESS} onClick={() => locate()} aria-label={user ? "Update my location" : "Share my location"} className={FLOAT_BUTTON}>
                 <LocateIcon spinning={loc === "locating"} />
-              </button>
+              </motion.button>
             </>
           )}
         </div>
@@ -346,6 +376,7 @@ export default function Home() {
             />
           ) : origin && (loc === "ok" || filtering) ? (
             <NearestList
+              inView={inView}
               title={filter.favoritesOnly ? "Favorites" : filtering ? (user ? "Matches near you" : "Matches near map center") : "Nearest to you"}
               items={nearest}
               favorites={favSet}
@@ -354,7 +385,7 @@ export default function Home() {
               onSelect={select}
             />
           ) : (
-            <Intro loc={loc} onLocate={() => locate()} />
+            <Intro loc={loc} inView={inView} onLocate={() => locate()} />
           )}
           </AutoHeight>
         </div>
@@ -365,13 +396,20 @@ export default function Home() {
 
 // ───────────────────────────────────────────────────────────
 
-function Intro({ loc, onLocate }: { loc: LocState; onLocate: () => void }) {
+function inViewLabel(n: number | null) {
+  if (n == null) return null;
+  return n === 0 ? "No stations in view" : `${n.toLocaleString()} station${n === 1 ? "" : "s"} in view`;
+}
+
+function Intro({ loc, inView, onLocate }: { loc: LocState; inView: number | null; onLocate: () => void }) {
   return (
     <div className="px-5 py-4">
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
           <h1 className="text-[17px] font-semibold leading-tight tracking-tight text-[var(--ink)]">Pure gas, close by.</h1>
-          <p className="mt-0.5 text-[13px] leading-snug text-[var(--muted)]">Nearest ethanol-free (E0) stations.</p>
+          <p className="mt-0.5 text-[13px] leading-snug text-[var(--muted)]">
+            {inViewLabel(inView) ?? "Nearest ethanol-free (E0) stations."}
+          </p>
         </div>
         <button
           onClick={onLocate}
@@ -426,12 +464,14 @@ function StationRow({
   );
 }
 
-/** Drag the handle up to show the list, down to tuck it away; tap to toggle. */
-function SheetHandle({ size, onResize }: { size: SheetSize; onResize: (s: SheetSize) => void }) {
+/** The card's top (handle + title): tap to open or close the list, or drag it up/down. */
+function SheetHandle({
+  size, onResize, children,
+}: { size: SheetSize; onResize: (s: SheetSize) => void; children: React.ReactNode }) {
   const startY = useRef<number | null>(null);
   return (
     <button
-      className="block w-full touch-none pb-1 pt-2.5"
+      className="block w-full touch-none pt-2.5 text-left"
       aria-label={size === "open" ? "Hide list" : "Show list"}
       onPointerDown={(e) => { startY.current = e.clientY; e.currentTarget.setPointerCapture(e.pointerId); }}
       onPointerUp={(e) => {
@@ -442,7 +482,8 @@ function SheetHandle({ size, onResize }: { size: SheetSize; onResize: (s: SheetS
         else onResize(size === "open" ? "none" : "open");
       }}
     >
-      <span className="mx-auto block h-1.5 w-10 rounded-full bg-[var(--hairline)]" />
+      <span className="mx-auto mb-1 block h-1.5 w-10 rounded-full bg-[var(--hairline)]" />
+      {children}
     </button>
   );
 }
@@ -466,9 +507,9 @@ function AutoHeight({ children }: { children: React.ReactNode }) {
 }
 
 function NearestList({
-  title, items, favorites, size, onResize, onSelect,
+  title, inView, items, favorites, size, onResize, onSelect,
 }: {
-  title: string; items: Ranked[]; favorites: Set<number>; size: SheetSize;
+  title: string; inView: number | null; items: Ranked[]; favorites: Set<number>; size: SheetSize;
   onResize: (s: SheetSize) => void; onSelect: (id: number) => void;
 }) {
   // The list shows three stations, then scrolls.
@@ -482,15 +523,14 @@ function NearestList({
   }, [items, size]);
   return (
     <div>
-      <SheetHandle size={size} onResize={onResize} />
-      <div className={`flex items-baseline justify-between px-5 pt-0.5 ${size === "none" ? "pb-4" : "pb-1"}`}>
-        <h2 className="text-[17px] font-semibold tracking-tight text-[var(--ink)]">{title}</h2>
-        {items.length > 0 && (
-          <button onClick={() => onResize(size === "open" ? "none" : "open")} className="text-[13px] font-medium text-[var(--accent)]">
-            {size === "open" ? "Hide" : `Show ${items.length}`}
-          </button>
-        )}
-      </div>
+      <SheetHandle size={size} onResize={onResize}>
+        <div className={`flex items-baseline justify-between gap-3 px-5 pt-0.5 ${size === "none" ? "pb-4" : "pb-1"}`}>
+          <h2 className="text-[17px] font-semibold tracking-tight text-[var(--ink)]">{title}</h2>
+          {inView != null && (
+            <span className="shrink-0 text-[13px] tabular-nums text-[var(--muted)]">{inViewLabel(inView)}</span>
+          )}
+        </div>
+      </SheetHandle>
       {size === "none" ? null : items.length === 0 ? (
         <p className="px-5 pb-5 text-[14px] text-[var(--muted)]">No stations match. Try a wider radius or a different search.</p>
       ) : (

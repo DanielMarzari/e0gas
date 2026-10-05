@@ -13,34 +13,26 @@ const SURFACE =
 /**
  * Opening: the bar springs open leftward from the button with a little overshoot,
  * then the text, filter and close roll up one after another.
- * Closing: those drop away first, the bar slides back right without bouncing,
- * and the round button pops back in.
+ * Closing: those drop away first, the bar slides back right, and the button
+ * (icon still showing) does the same press-and-pop as the other round buttons.
  */
 const bar: Variants = {
   closed: {
     width: BUTTON,
-    opacity: 0,
-    scale: 0.6,
-    transition: {
-      when: "afterChildren",
-      width: { type: "tween", ease: [0.4, 0, 0.2, 1], duration: 0.28 },
-      opacity: { delay: 0.28, duration: 0.08 },
-      scale: { delay: 0.28, duration: 0.08 },
-    },
+    transition: { when: "afterChildren", width: { type: "tween", ease: [0.4, 0, 0.2, 1], duration: 0.28 } },
   },
   open: (w: number) => ({
     width: w,
-    opacity: 1,
-    scale: 1,
     transition: {
-      width: { type: "spring", stiffness: 300, damping: 17, mass: 0.9 },
-      opacity: { duration: 0 },
-      scale: { duration: 0 },
-      delayChildren: 0.16,
+      // Springy but never past its final width, so it stays on screen.
+      width: { type: "spring", stiffness: 260, damping: 30, restDelta: 0.5 },
+      delayChildren: 0.14,
       staggerChildren: 0.07,
     },
   }),
 };
+/** Same press-and-pop the other round buttons use. */
+const POP = { type: "spring", stiffness: 520, damping: 20 } as const;
 const part: Variants = {
   closed: { opacity: 0, y: 10, transition: { duration: 0.09 } },
   open: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 500, damping: 30 } },
@@ -125,8 +117,9 @@ export default function SearchControl({
           key="button"
           onClick={onOpen}
           aria-label="Search"
-          initial={{ scale: 0.6, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1, transition: { type: "spring", stiffness: 520, damping: 22 } }}
+          initial={{ scale: 0.86 }}
+          animate={{ scale: 1, transition: POP }}
+          whileTap={{ scale: 0.86, transition: POP }}
           // Swap instantly to the bar, which starts at exactly this size.
           exit={{ opacity: 0, transition: { duration: 0 } }}
           className={`relative grid h-12 w-12 place-items-center rounded-full text-[var(--accent)] ${SURFACE}`}
