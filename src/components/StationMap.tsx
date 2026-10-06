@@ -410,8 +410,13 @@ export default function StationMap({
   function frameOnUser(map: maplibregl.Map) {
     const { user, focus, insets } = latest.current;
     if (!user) return;
+    // Mirror each station through your position so the box is centered on you:
+    // you end up dead center, zoomed out just enough to keep them all in view.
     const bounds = new maplibregl.LngLatBounds([user.lng, user.lat], [user.lng, user.lat]);
-    for (const s of focus.slice(0, 3)) bounds.extend([s.lng, s.lat]);
+    for (const s of focus.slice(0, 3)) {
+      bounds.extend([s.lng, s.lat]);
+      bounds.extend([2 * user.lng - s.lng, 2 * user.lat - s.lat]);
+    }
     map.fitBounds(bounds, {
       padding: {
         top: Math.max(110, insets.top + 20),
