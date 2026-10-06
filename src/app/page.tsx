@@ -785,7 +785,7 @@ function SelectedCard({
             rel="noopener"
             className="mt-2 flex w-full items-center justify-center gap-2 rounded-2xl bg-[var(--accent-soft)] py-3 text-[15px] font-semibold text-[var(--accent)] transition active:scale-[0.98]"
           >
-            Gas prices nearby on GasBuddy ↗
+            This station on GasBuddy ↗
           </a>
           <p className="mt-1.5 text-center text-[11px] text-[var(--muted)]">GasBuddy doesn&apos;t list ethanol-free prices.</p>
         </>
