@@ -107,11 +107,13 @@ export function googleMapsUrl(s: Station): string {
 }
 
 /**
- * GasBuddy has no public API or stable per-station links, so open its price list for the
- * station's town. Its prices are regular/mid/premium — it doesn't track ethanol-free separately.
+ * GasBuddy has no public API to look up a station's own page, so search its address:
+ * results are sorted by distance, which puts this station at (or near) the top.
+ * Its prices are regular/mid/premium — it doesn't track ethanol-free separately.
  */
 export function gasBuddyUrl(s: Station): string {
-  const where = /^\d{5}$/.test(s.city) ? s.city : [titleCase(s.city), s.state].filter(Boolean).join(", ");
+  const town = /^\d{5}$/.test(s.city) ? s.city : [titleCase(s.city), s.state].filter(Boolean).join(", ");
+  const where = [titleCase(s.street), town].filter(Boolean).join(", ");
   return `https://www.gasbuddy.com/home?search=${encodeURIComponent(where)}&fuel=1`;
 }
 
